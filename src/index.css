@@ -1,80 +1,210 @@
 @import "tailwindcss";
 
 @theme {
-  --color-paper: #e4e9ef;
-  --color-snow: #f4f6f8;
-  --color-ink: #15202b;
-  --color-mute: #5b6b79;
-  --color-line: #c9d3dd;
-  --color-brass: #9a6b2f;
-  --color-brass-soft: #f3e6d2;
-  --color-sage: #3d6a56;
-  --color-dock: #11181f;
+  --color-bone: #ece9e2;
+  --color-paper: #f7f5f0;
+  --color-ink: #161514;
+  --color-ink-soft: #2b2926;
+  --color-mute: #6a655c;
+  --color-faint: #9c968b;
+  --color-line: #d6d0c4;
+  --color-line-strong: #b9b1a2;
+  --color-copper: #b0722a;
+  --color-copper-soft: #efe1cc;
+  --color-moss: #4c6b5e;
+  --color-moss-soft: #dce5df;
+  --color-night: #1b1a18;
+
   --font-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --font-display: "Source Serif 4", "Noto Serif SC", serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-display: "Fraunces", "Noto Serif SC", "Songti SC", serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 :root {
   color-scheme: light;
-  --bg: #e4e9ef;
-  --shadow: 0 1px 0 rgba(21, 32, 43, 0.04);
+  --shadow-hair: 0 1px 0 rgba(22, 21, 20, 0.05);
+  --shadow-lift: 0 12px 32px -16px rgba(22, 21, 20, 0.28), 0 1px 0 rgba(22, 21, 20, 0.05);
 }
 
-* {
-  box-sizing: border-box;
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-bone);
+    background-image:
+      radial-gradient(900px 360px at 12% -10%, rgba(176, 114, 42, 0.07), transparent 60%),
+      radial-gradient(700px 300px at 100% 0%, rgba(76, 107, 94, 0.05), transparent 60%);
+    background-attachment: fixed;
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.6;
+    font-feature-settings: "palt" 1;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  button,
+  [role="button"],
+  label.cursor-pointer,
+  summary {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-copper);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background: var(--color-copper-soft);
+    color: var(--color-ink);
+  }
+
+  input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type="time"]::-webkit-calendar-picker-indicator {
+    opacity: 0.4;
+    cursor: pointer;
+  }
+  .on-dark input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+  }
 }
 
-html,
-body,
-#root {
-  min-height: 100%;
+@layer components {
+  .font-display {
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-feature-settings: "ss01" 1, "palt" 1;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
 }
 
-body {
-  margin: 0;
-  background:
-    radial-gradient(1200px 420px at 50% -120px, rgba(154, 107, 47, 0.08), transparent 55%),
-    var(--color-paper);
-  color: var(--color-ink);
-  font-family: var(--font-sans);
-  font-size: 16px;
-  line-height: 1.55;
+/* Motion */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-button,
-input,
-select {
-  font: inherit;
+@keyframes draw-down {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
 }
 
-button,
-[role="button"],
-label.cursor-pointer {
-  cursor: pointer;
+@keyframes breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(176, 114, 42, 0.45);
+  }
+  60% {
+    box-shadow: 0 0 0 7px rgba(176, 114, 42, 0);
+  }
 }
 
-:focus-visible {
-  outline: 2px solid var(--color-brass);
-  outline-offset: 3px;
+@keyframes sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
-::selection {
-  background: var(--color-brass-soft);
-  color: var(--color-ink);
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
-input[type='time']::-webkit-calendar-picker-indicator {
-  opacity: 0.45;
-  cursor: pointer;
-  filter: invert(1);
+@utility rise {
+  animation: rise 420ms var(--ease-out-quart) both;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+
+@utility draw-down {
+  transform-origin: top;
+  animation: draw-down 600ms var(--ease-out-quart) both;
+}
+
+@utility breathe {
+  animation: breathe 2.4s ease-out infinite;
+}
+
+@utility sheet-up {
+  animation: sheet-up 320ms var(--ease-out-quart) both;
+}
+
+@utility fade-in {
+  animation: fade 200ms ease-out both;
+}
+
+@utility hairline {
+  box-shadow: var(--shadow-hair);
+}
+
+@utility lift {
+  box-shadow: var(--shadow-lift);
 }
 
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
-    animation: none !important;
-    transition: none !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

@@ -1,16 +1,32 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { Check, Play, Square } from 'lucide-react'
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
+import { Check, Play, Plus, Square } from 'lucide-react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from 'react'
 import { Link } from 'react-router-dom'
+import { Chain } from '../components/ui/Chain'
+import { Dialog } from '../components/ui/Dialog'
+import { Meter } from '../components/ui/Meter'
+import { Button, Input, Kicker, Segmented, cx } from '../components/ui/primitives'
+import { Spine, SpineNode } from '../components/ui/Spine'
 import { addTaskEvent, db, ensureDailyPlan, newId } from '../db/db'
 import {
   importanceScore,
   suggestAlignment,
-  whyLine,
   whyPathFor,
 } from '../domain/alignment'
 import { todayKey } from '../domain/clock'
-import type { PriorityBand, Task } from '../domain/types'
+import type { Commitment, Desire, Goal, PriorityBand, Task } from '../domain/types'
+import { useMediaQuery } from '../hooks/useMediaQuery'
+
+const EMPTY_DESIRES: Desire[] = []
+const EMPTY_GOALS: Goal[] = []
+const EMPTY_COMMITMENTS: Commitment[] = []
 
 const BANDS: { id: PriorityBand; label: string; hint: string }[] = [
   { id: 'must', label: 'MUST', hint: '今天不能悄悄消失' },
@@ -19,10 +35,26 @@ const BANDS: { id: PriorityBand; label: string; hint: string }[] = [
 ]
 
 const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+const MONTHS = [
+  '一月',
+  '二月',
+  '三月',
+  '四月',
+  '五月',
+  '六月',
+  '七月',
+  '八月',
+  '九月',
+  '十月',
+  '十一月',
+  '十二月',
+]
 
 export function TodayPage() {
   const date = todayKey()
   const now = new Date()
+  const isDesktop = useMediaQuery('(min-width: 1024px)')
+
   const [title, setTitle] = useState('')
   const [minutes, setMinutes] = useState(90)
   const [band, setBand] = useState<PriorityBand>('must')
@@ -33,6 +65,7 @@ export function TodayPage() {
   const [goalId, setGoalId] = useState('')
   const [commitmentId, setCommitmentId] = useState('')
   const [manualAlign, setManualAlign] = useState(false)
+  const [composerOpen, setComposerOpen] = useState(false)
 
   const plan = useLiveQuery(() => db.dailyPlans.get(date), [date])
   const tasks = useLiveQuery(
@@ -40,9 +73,9 @@ export function TodayPage() {
     [date],
   )
   const sessions = useLiveQuery(() => db.workSessions.toArray(), [])
-  const desires = useLiveQuery(() => db.desires.toArray(), [])
-  const goals = useLiveQuery(() => db.goals.toArray(), [])
-  const commitments = useLiveQuery(() => db.commitments.toArray(), [])
+  const desires = useLiveQuery(() => db.desires.toArray(), []) ?? EMPTY_DESIRES
+  const goals = useLiveQuery(() => db.goals.toArray(), []) ?? EMPTY_GOALS
+  const commitments = useLiveQuery(() => db.commitments.toArray(), []) ?? EMPTY_COMMITMENTS
 
   useEffect(() => {
     void ensureDailyPlan(date)
@@ -61,13 +94,7 @@ export function TodayPage() {
   }, [sessions])
 
   const suggestion = useMemo(
-    () =>
-      suggestAlignment(
-        title,
-        goals ?? [],
-        desires ?? [],
-        commitments ?? [],
-      ),
+    () => suggestAlignment(title, goals, desires, commitments),
     [title, goals, desires, commitments],
   )
 
@@ -78,27 +105,40 @@ export function TodayPage() {
   }, [suggestion, manualAlign])
 
   const alignedPath = useMemo(() => {
-    const goal = (goals ?? []).find((item) => item.id === goalId)
-    const desire = (desires ?? []).find((item) => item.id === goal?.primaryDesireId)
-    const commitment = (commitments ?? []).find((item) => item.id === commitmentId)
+    const goal = goals.find((item) => item.id === goalId)
+    const desire = desires.find((item) => item.id === goal?.primaryDesireId)
+    const commitment = commitments.find((item) => item.id === commitmentId)
     return whyPathFor(goal, desire, commitment)
   }, [goalId, commitmentId, goals, desires, commitments])
 
+  const loading = tasks === undefined
   const visibleTasks = (tasks ?? []).filter((task) => task.status !== 'cancelled')
 
+  function contextOf(task: Task) {
+    const goal = goals.find((item) => item.id === task.primaryGoalId)
+    const desire = desires.find((item) => item.id === goal?.primaryDesireId)
+    const commitment = commitments.find((item) => item.id === task.primaryCommitmentId)
+    return { goal, desire, commitment }
+  }
   function rankTask(task: Task): number {
-    const goal = (goals ?? []).find((item) => item.id === task.primaryGoalId)
-    const desire = (desires ?? []).find((item) => item.id === goal?.primaryDesireId)
-    const commitment = (commitments ?? []).find(
-      (item) => item.id === task.primaryCommitmentId,
-    )
+    const { desire, commitment } = contextOf(task)
     return importanceScore(task.priorityBand, desire, commitment)
   }
-  const plannedMust = visibleTasks
-    .filter((task) => task.priorityBand === 'must')
-    .reduce((sum, task) => sum + task.plannedMinutes, 0)
-  const loadRatio =
-    capacityDraft > 0 ? Math.min(1, plannedMust / capacityDraft) : 0
+
+  const mustTasks = visibleTasks.filter((task) => task.priorityBand === 'must')
+  const plannedMust = mustTasks.reduce((sum, task) => sum + task.plannedMinutes, 0)
+  const doneMust = mustTasks.filter((task) => task.status === 'completed').length
+  const minutesToMidnight = Math.max(
+    0,
+    Math.floor(
+      (new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59).getTime() -
+        now.getTime()) /
+        60_000,
+    ),
+  )
+  const remaining = Math.min(capacityDraft - plannedMust, minutesToMidnight)
+  const runningTask = visibleTasks.find((task) => task.status === 'in_progress')
+  const alignedCount = visibleTasks.filter((task) => task.primaryGoalId).length
 
   async function saveCapacity() {
     await db.dailyPlans.put({
@@ -129,6 +169,7 @@ export function TodayPage() {
     setTitle('')
     setPlannedStart('')
     setManualAlign(false)
+    setComposerOpen(false)
   }
 
   async function startTask(task: Task) {
@@ -139,10 +180,7 @@ export function TodayPage() {
       startedAt: new Date().toISOString(),
     })
     await db.tasks.update(task.id, { status: 'in_progress' })
-    await addTaskEvent(task.id, 'started', {
-      before: task.status,
-      after: 'in_progress',
-    })
+    await addTaskEvent(task.id, 'started', { before: task.status, after: 'in_progress' })
   }
 
   async function finishTask(task: Task, actualMinutes: number) {
@@ -152,10 +190,7 @@ export function TodayPage() {
       const session = await db.workSessions.get(openId)
       const started = session ? new Date(session.startedAt).getTime() : Date.now()
       const computed = Math.max(1, Math.round((Date.now() - started) / 60_000))
-      await db.workSessions.update(openId, {
-        endedAt: stamp,
-        actualMinutes: computed,
-      })
+      await db.workSessions.update(openId, { endedAt: stamp, actualMinutes: computed })
     } else {
       await db.workSessions.add({
         id: newId(),
@@ -166,10 +201,7 @@ export function TodayPage() {
       })
     }
     await db.tasks.update(task.id, { status: 'completed', completedAt: stamp })
-    await addTaskEvent(task.id, 'completed', {
-      before: task.status,
-      after: 'completed',
-    })
+    await addTaskEvent(task.id, 'completed', { before: task.status, after: 'completed' })
     setCompleteTask(null)
   }
 
@@ -182,358 +214,593 @@ export function TodayPage() {
     setCompleteTask(task)
   }
 
+  const closeComplete = useCallback(() => setCompleteTask(null), [])
+  const closeComposer = useCallback(() => setComposerOpen(false), [])
+
   const day = Number(date.slice(8, 10))
   const month = Number(date.slice(5, 7))
 
+  const composer = (
+    <Composer
+      title={title}
+      minutes={minutes}
+      band={band}
+      plannedStart={plannedStart}
+      goalId={goalId}
+      goals={goals}
+      alignedPath={alignedPath}
+      onTitle={(value) => {
+        setTitle(value)
+        setManualAlign(false)
+      }}
+      onMinutes={setMinutes}
+      onBand={setBand}
+      onPlannedStart={setPlannedStart}
+      onGoal={(value) => {
+        setManualAlign(true)
+        setGoalId(value)
+        const goal = goals.find((item) => item.id === value)
+        const linked = commitments.find(
+          (item) => item.primaryGoalId === goal?.id && item.state === 'active',
+        )
+        setCommitmentId(linked?.id ?? '')
+      }}
+      onSubmit={() => void addTask()}
+      floating={isDesktop}
+    />
+  )
+
+  let nodeIndex = 0
+
   return (
-    <section>
-      <header className="flex items-end justify-between gap-4">
-        <div>
-          <p className="font-mono text-[11px] tracking-[0.22em] text-mute">
-            {date}
-          </p>
-          <div className="mt-2 flex items-end gap-4">
-            <h1 className="font-display text-[4.75rem] leading-none tracking-tight text-ink">
+    <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_17rem] lg:gap-16 xl:grid-cols-[minmax(0,1fr)_19rem]">
+      <section className="min-w-0">
+        <header className="rise">
+          <Kicker>
+            {date} · {WEEKDAYS[now.getDay()]}
+          </Kicker>
+          <div className="mt-3 flex items-end gap-5">
+            <h1 className="font-display text-[5.75rem] leading-[0.82] tracking-[-0.035em] text-ink tabular sm:text-[6.5rem]">
               {day}
             </h1>
-            <div className="mb-1.5">
-              <p className="text-sm font-medium">{month}月</p>
-              <p className="text-sm text-mute">{WEEKDAYS[now.getDay()]}</p>
+            <div className="pb-1">
+              <p className="font-display text-[1.6rem] leading-none tracking-tight">
+                {MONTHS[month - 1]}
+              </p>
+              <p className="mt-2 text-[13px] leading-5 text-mute">
+                {mustTasks.length === 0
+                  ? '先写下今天不能逃的事。'
+                  : `${doneMust}/${mustTasks.length} 件 MUST 已完成`}
+              </p>
             </div>
           </div>
-        </div>
-        <p className="hidden max-w-[10rem] text-right text-sm leading-6 text-mute sm:block">
-          先写下今天不能逃的事，再开始计时。
-        </p>
-      </header>
+        </header>
 
-      <div className="mt-8 rounded-2xl border border-line bg-snow p-5 shadow-[0_1px_0_rgba(21,32,43,0.04)]">
-        <div className="flex items-end justify-between gap-3">
-          <label className="text-sm text-mute">
-            今天能投入
-            <input
-              type="number"
-              min={0}
-              className="mt-2 block w-28 rounded-md border border-line bg-paper px-3 py-2 font-mono text-ink"
+        {/* Compact capacity strip: phone & tablet */}
+        <div className="rise mt-8 border-y border-line py-4 lg:hidden" style={{ ['--i' as string]: 1 }}>
+          <div className="flex items-baseline justify-between gap-4">
+            <CapacityInput
               value={capacityDraft}
-              onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                setCapacityDraft(Number(event.target.value))
-              }
-              onBlur={() => void saveCapacity()}
+              onChange={setCapacityDraft}
+              onCommit={() => void saveCapacity()}
             />
-          </label>
-          <div className="text-right">
-            <p className="text-sm text-mute">MUST 已占</p>
-            <p className="mt-1 font-mono text-2xl tracking-tight">
-              {plannedMust}
-              <span className="text-sm text-mute"> / {capacityDraft}</span>
+            <p className="font-mono text-[12px] text-mute tabular">
+              MUST 已占 <span className="text-ink">{plannedMust}</span>
+              {remaining < 0 ? (
+                <span className="text-copper"> · 超出 {-remaining}</span>
+              ) : (
+                <span> · 余 {remaining}</span>
+              )}
             </p>
           </div>
+          <Meter value={plannedMust} max={capacityDraft} label="MUST 占用今日容量" thin className="mt-3" />
         </div>
-        <div
-          className="mt-5 h-2 overflow-hidden rounded-full bg-line"
-          role="meter"
-          aria-label="MUST 占用今日容量"
-          aria-valuemin={0}
-          aria-valuemax={capacityDraft}
-          aria-valuenow={plannedMust}
-        >
-          <div
-            className={`h-full rounded-full transition-[width] duration-300 ease-out ${
-              loadRatio > 1 || plannedMust > capacityDraft
-                ? 'bg-brass'
-                : 'bg-ink'
-            }`}
-            style={{ width: `${Math.round(loadRatio * 100)}%` }}
-          />
-        </div>
-      </div>
 
-      <form
-        className="mt-5 overflow-hidden rounded-2xl bg-ink text-snow"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void addTask()
-        }}
-      >
-        <label className="block px-5 pt-5 text-[11px] tracking-[0.22em] text-brass">
-          写入今日
-          <input
-            required
-            placeholder="一件今天必须完成的事"
-            className="mt-3 w-full border-0 bg-transparent p-0 text-lg text-snow outline-none placeholder:text-white/30 focus-visible:outline-none"
-            value={title}
-            onChange={(event: ChangeEvent<HTMLInputElement>) => {
-              setTitle(event.target.value)
-              setManualAlign(false)
-            }}
-          />
-        </label>
-        <div className="mt-5 grid grid-cols-2 border-t border-white/10 sm:grid-cols-[6.5rem_minmax(0,1fr)_8rem_5.5rem]">
-          <label className="border-b border-white/10 px-4 py-3 text-[11px] text-white/45 sm:border-b-0 sm:border-r">
-            分钟
-            <input
-              type="number"
-              min={1}
-              className="mt-1 w-full border-0 bg-transparent p-0 font-mono text-sm text-snow outline-none focus-visible:outline-none"
-              value={minutes}
-              onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                setMinutes(Number(event.target.value))
-              }
-            />
-          </label>
-          <label className="border-b border-white/10 px-4 py-3 text-[11px] text-white/45 sm:order-3 sm:border-b-0 sm:border-r">
-            开始
-            <input
-              type="time"
-              className="mt-1 w-full border-0 bg-transparent p-0 font-mono text-sm text-snow outline-none focus-visible:outline-none"
-              value={plannedStart}
-              onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                setPlannedStart(event.target.value)
-              }
-            />
-          </label>
-          <fieldset className="col-span-2 border-b border-white/10 px-1 py-1 sm:col-span-1 sm:order-2 sm:border-b-0 sm:border-r">
-            <legend className="sr-only">优先级</legend>
-            <div className="grid h-full grid-cols-3">
-              {BANDS.map((item) => (
-                <label
-                  key={item.id}
-                  className={`flex min-h-11 cursor-pointer items-center justify-center font-mono text-[10px] tracking-[0.14em] transition-colors duration-200 ${
-                    band === item.id ? 'bg-brass text-ink' : 'text-white/65 hover:text-snow'
-                  }`}
+        <Spine className="mt-10 lg:mt-14">
+          {loading ? null : BANDS.map((item) => {
+            const list = visibleTasks
+              .filter((task) => task.priorityBand === item.id)
+              .sort((left, right) => rankTask(right) - rankTask(left))
+            if (item.id !== 'must' && list.length === 0) return null
+            const total = list.reduce((sum, task) => sum + task.plannedMinutes, 0)
+            const headerIndex = nodeIndex++
+            return (
+              <li key={item.id} className="not-first:mt-10">
+                <div
+                  className="rise flex items-baseline justify-between gap-4 pl-9"
+                  style={{ ['--i' as string]: headerIndex }}
                 >
-                  <input
-                    type="radio"
-                    name="band"
-                    className="sr-only"
-                    checked={band === item.id}
-                    onChange={() => setBand(item.id)}
-                  />
-                  {item.label}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+                  <h2 className="font-mono text-[11px] tracking-[0.24em] text-ink">
+                    {item.label}
+                    {list.length > 0 ? (
+                      <span className="text-faint">
+                        {' '}
+                        · {list.length} 项 · {total} min
+                      </span>
+                    ) : null}
+                  </h2>
+                  <p className="text-[12px] text-faint">{item.hint}</p>
+                </div>
+                {list.length === 0 ? (
+                  <ol className="mt-3">
+                    <SpineNode tone="optional" index={nodeIndex++} className="py-2">
+                      <p className="text-[15px] leading-7 text-mute">
+                        今天还没有不可撤回的事。
+                        {isDesktop ? '在下方录入台写下第一件 MUST。' : '点右下角「记下」写下第一件 MUST。'}
+                      </p>
+                    </SpineNode>
+                  </ol>
+                ) : (
+                  <ol className="mt-3">
+                    {list.map((task) => {
+                      const { goal, desire, commitment } = contextOf(task)
+                      return (
+                        <TaskNode
+                          key={task.id}
+                          index={nodeIndex++}
+                          task={task}
+                          why={whyPathFor(goal, desire, commitment)}
+                          importance={rankTask(task)}
+                          sessionStartedAt={
+                            openSessions.has(task.id)
+                              ? sessions?.find((session) => session.id === openSessions.get(task.id))
+                                  ?.startedAt
+                              : undefined
+                          }
+                          onStart={() => void startTask(task)}
+                          onComplete={() => requestComplete(task)}
+                        />
+                      )
+                    })}
+                  </ol>
+                )}
+              </li>
+            )
+          })}
+        </Spine>
+
+        {isDesktop ? <div className="sticky bottom-6 mt-14">{composer}</div> : null}
+      </section>
+
+      <aside className="hidden lg:block lg:sticky lg:top-12 lg:self-start">
+        <div className="rise border-l border-line pl-8" style={{ ['--i' as string]: 2 }}>
+          <Kicker>今日容量</Kicker>
+          <div className="mt-4 flex items-end justify-between gap-3">
+            <CapacityInput
+              value={capacityDraft}
+              onChange={setCapacityDraft}
+              onCommit={() => void saveCapacity()}
+              large
+            />
+            <p className="pb-1 text-right font-mono text-[12px] leading-5 text-mute tabular">
+              MUST 已占
+              <br />
+              <span className="text-[15px] text-ink">{plannedMust}</span>
+            </p>
+          </div>
+          <Meter value={plannedMust} max={capacityDraft} label="MUST 占用今日容量" className="mt-4" />
+          <p className="mt-3 text-[13px] leading-6 text-mute">
+            {remaining < 0 ? (
+              <>
+                MUST 已超出容量 <span className="font-mono text-copper">{-remaining}</span> 分钟。
+                今天不该全都留下。
+              </>
+            ) : (
+              <>
+                还能给 MUST <span className="font-mono text-ink">{remaining}</span> 分钟，
+                距今日结束 {formatHours(minutesToMidnight)}。
+              </>
+            )}
+          </p>
+        </div>
+
+        <div className="rise mt-10 border-l border-line pl-8" style={{ ['--i' as string]: 3 }}>
+          <Kicker>此刻</Kicker>
+          <p className="mt-3 text-[15px] leading-7 text-ink">
+            {runningTask ? (
+              <>
+                正在做「{runningTask.title}」。
+                <span className="text-mute">做完再看别的。</span>
+              </>
+            ) : mustTasks.length === 0 ? (
+              '还没有 MUST。今天最不能逃的一件事是什么？'
+            ) : doneMust === mustTasks.length ? (
+              '今天的 MUST 全部关账。剩下的时间是你的。'
+            ) : (
+              <>
+                {mustTasks.length - doneMust} 件 MUST 待办。
+                <span className="text-mute">选一件，点开始。</span>
+              </>
+            )}
+          </p>
+        </div>
+
+        <div className="rise mt-10 border-l border-line pl-8" style={{ ['--i' as string]: 4 }}>
+          <Kicker>结构</Kicker>
+          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 font-mono text-[12px] tabular">
+            {BANDS.map((item) => {
+              const count = visibleTasks.filter((task) => task.priorityBand === item.id).length
+              return (
+                <RailRow key={item.id} label={item.label} value={count} dim={count === 0} />
+              )
+            })}
+            <RailRow
+              label="已对齐"
+              value={`${alignedCount}/${visibleTasks.length}`}
+              dim={visibleTasks.length === 0}
+            />
+          </dl>
+          {goals.length === 0 ? (
+            <Link
+              to="/direction"
+              className="mt-4 inline-block text-[13px] text-copper underline-offset-4 hover:underline"
+            >
+              还没有方向。先写下欲望与目标 →
+            </Link>
+          ) : null}
+        </div>
+
+        {commitments.some((item) => item.state === 'active') ? (
+          <div className="rise mt-10 border-l border-line pl-8" style={{ ['--i' as string]: 5 }}>
+            <Kicker>活跃承诺</Kicker>
+            <ul className="mt-3 space-y-3">
+              {commitments
+                .filter((item) => item.state === 'active')
+                .map((item) => {
+                  const linked = visibleTasks.filter((task) => task.primaryCommitmentId === item.id)
+                  const mins = linked.reduce((sum, task) => sum + task.plannedMinutes, 0)
+                  return (
+                    <li key={item.id}>
+                      <p className="text-[14px] leading-6 text-ink">{item.title}</p>
+                      <p className="font-mono text-[11px] text-mute tabular">
+                        {linked.length > 0 ? `今日 ${linked.length} 项 · ${mins} min` : '今日无动作'}
+                      </p>
+                    </li>
+                  )
+                })}
+            </ul>
+          </div>
+        ) : null}
+      </aside>
+
+      {!isDesktop ? (
+        <>
           <button
-            type="submit"
-            className="col-span-2 min-h-14 bg-snow text-sm font-medium text-ink transition-colors duration-200 hover:bg-brass-soft sm:col-span-1 sm:order-4"
+            type="button"
+            onClick={() => setComposerOpen(true)}
+            className="lift fixed bottom-[calc(4rem+env(safe-area-inset-bottom)+1rem)] right-5 z-30 inline-flex min-h-12 items-center gap-2 rounded-full bg-ink pl-4 pr-5 text-sm font-medium text-paper transition-transform duration-200 active:scale-[0.98] md:bottom-8"
           >
+            <Plus className="size-4" aria-hidden />
             记下
           </button>
-        </div>
-        <div className="flex flex-col gap-2 border-t border-white/10 px-4 py-3 text-xs sm:flex-row sm:items-center sm:justify-between">
-          {(goals ?? []).length === 0 ? (
-            <Link to="/direction" className="text-brass hover:text-snow">
-              先去「方向」写下欲望和目标，任务才能自动对齐
-            </Link>
-          ) : (
-            <>
-              <p className="min-w-0 flex-1 text-white/60">
-                {alignedPath.length > 0
-                  ? `自动对齐 · ${whyLine(alignedPath)}`
-                  : '尚未匹配到目标，可手动选择'}
-              </p>
-              <select
-                className="max-w-[14rem] rounded-md border border-white/15 bg-transparent px-2 py-2 text-snow"
-                value={goalId}
-                onChange={(event: ChangeEvent<HTMLSelectElement>) => {
-                  setManualAlign(true)
-                  setGoalId(event.target.value)
-                  const goal = (goals ?? []).find((item) => item.id === event.target.value)
-                  const linked = (commitments ?? []).find(
-                    (item) => item.primaryGoalId === goal?.id && item.state === 'active',
-                  )
-                  setCommitmentId(linked?.id ?? '')
-                }}
-              >
-                <option value="">不对齐</option>
-                {(goals ?? [])
-                  .filter((goal) => goal.status === 'active')
-                  .map((goal) => (
-                    <option key={goal.id} value={goal.id}>
-                      {goal.title}
-                    </option>
-                  ))}
-              </select>
-            </>
-          )}
-        </div>
-      </form>
-
-      {BANDS.map((item) => {
-        const list = visibleTasks
-          .filter((task) => task.priorityBand === item.id)
-          .sort((left, right) => rankTask(right) - rankTask(left))
-        if (item.id !== 'must' && list.length === 0) return null
-        return (
-          <section key={item.id} className="mt-10">
-            <div className="flex items-baseline justify-between">
-              <h2 className="font-mono text-[11px] tracking-[0.22em] text-mute">
-                {item.label}
-              </h2>
-              <p className="text-xs text-mute">{item.hint}</p>
-            </div>
-            {list.length === 0 ? (
-              <p className="mt-4 border-t border-line pt-4 text-sm text-mute">
-                今天还没有不可撤回的事。先写下第一件 MUST。
-              </p>
-            ) : (
-              <ul className="mt-4 space-y-3">
-                {list.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    why={whyLine(
-                      whyPathFor(
-                        (goals ?? []).find((item) => item.id === task.primaryGoalId),
-                        (desires ?? []).find(
-                          (item) =>
-                            item.id ===
-                            (goals ?? []).find((goal) => goal.id === task.primaryGoalId)
-                              ?.primaryDesireId,
-                        ),
-                        (commitments ?? []).find(
-                          (item) => item.id === task.primaryCommitmentId,
-                        ),
-                      ),
-                    )}
-                    importance={rankTask(task)}
-                    sessionStartedAt={
-                      openSessions.has(task.id)
-                        ? sessions?.find((session) => session.id === openSessions.get(task.id))
-                            ?.startedAt
-                        : undefined
-                    }
-                    onStart={() => void startTask(task)}
-                    onComplete={() => requestComplete(task)}
-                  />
-                ))}
-              </ul>
-            )}
-          </section>
-        )
-      })}
-
-      {completeTask && (
-        <div className="fixed inset-0 z-30 flex items-end justify-center bg-ink/40 p-4 sm:items-center">
-          <form
-            className="w-full max-w-sm rounded-2xl bg-snow p-5"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void finishTask(completeTask, manualMinutes)
-            }}
+          <Dialog
+            open={composerOpen}
+            onClose={closeComposer}
+            title="写入今日"
+            kicker="Today"
+            tone="night"
           >
-            <p className="font-display text-2xl">记录实际投入</p>
-            <p className="mt-2 text-sm leading-6 text-mute">
-              这次没有点「开始」，需要手填分钟，不会自动等于计划时长。
-            </p>
-            <input
+            {composer}
+          </Dialog>
+        </>
+      ) : null}
+
+      <Dialog
+        open={completeTask !== null}
+        onClose={closeComplete}
+        kicker="Complete"
+        title="记录实际投入"
+      >
+        <form
+          onSubmit={(event: FormEvent) => {
+            event.preventDefault()
+            if (completeTask) void finishTask(completeTask, manualMinutes)
+          }}
+        >
+          <p className="text-sm leading-7 text-mute">
+            这次没有点「开始」。请手填实际分钟，不会自动等于计划时长。
+          </p>
+          <div className="mt-4 flex items-baseline gap-3">
+            <Input
               type="number"
               min={1}
-              className="mt-4 w-full rounded-md border border-line bg-paper px-3 py-3 font-mono"
+              className="w-32 font-mono text-2xl tabular"
               value={manualMinutes}
               onChange={(event: ChangeEvent<HTMLInputElement>) =>
                 setManualMinutes(Number(event.target.value))
               }
             />
-            <div className="mt-4 flex gap-2">
-              <button
-                type="button"
-                className="min-h-11 flex-1 rounded-md border border-line"
-                onClick={() => setCompleteTask(null)}
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                className="min-h-11 flex-1 rounded-md bg-ink text-snow"
-              >
-                确认完成
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-    </section>
+            <span className="font-mono text-sm text-mute">
+              min · 计划 {completeTask?.plannedMinutes}
+            </span>
+          </div>
+          <div className="mt-6 flex gap-2">
+            <Button type="button" variant="ghost" className="flex-1" onClick={closeComplete}>
+              取消
+            </Button>
+            <Button type="submit" variant="solid" className="flex-1">
+              确认完成
+            </Button>
+          </div>
+        </form>
+      </Dialog>
+    </div>
   )
 }
 
-function TaskCard({
+function RailRow({
+  label,
+  value,
+  dim,
+}: {
+  label: string
+  value: string | number
+  dim?: boolean
+}) {
+  return (
+    <>
+      <dt className={cx('tracking-[0.18em]', dim ? 'text-faint' : 'text-mute')}>{label}</dt>
+      <dd className={cx('text-right', dim ? 'text-faint' : 'text-ink')}>{value}</dd>
+    </>
+  )
+}
+
+function CapacityInput({
+  value,
+  onChange,
+  onCommit,
+  large = false,
+}: {
+  value: number
+  onChange: (value: number) => void
+  onCommit: () => void
+  large?: boolean
+}) {
+  return (
+    <label className="inline-flex items-baseline gap-2">
+      <span className="sr-only">今天能投入的分钟数</span>
+      <input
+        type="number"
+        min={0}
+        inputMode="numeric"
+        className={cx(
+          'w-[4.5ch] border-0 border-b border-line-strong bg-transparent p-0 font-display text-ink tabular transition-colors focus:border-ink focus:outline-none',
+          large ? 'text-[2.6rem] leading-none' : 'text-[1.5rem] leading-none',
+        )}
+        value={value}
+        onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(Number(event.target.value))}
+        onBlur={onCommit}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') (event.target as HTMLInputElement).blur()
+        }}
+      />
+      <span className="font-mono text-[11px] tracking-[0.18em] text-mute">MIN</span>
+    </label>
+  )
+}
+
+function Composer({
+  title,
+  minutes,
+  band,
+  plannedStart,
+  goalId,
+  goals,
+  alignedPath,
+  onTitle,
+  onMinutes,
+  onBand,
+  onPlannedStart,
+  onGoal,
+  onSubmit,
+  floating,
+}: {
+  title: string
+  minutes: number
+  band: PriorityBand
+  plannedStart: string
+  goalId: string
+  goals: Goal[]
+  alignedPath: string[]
+  onTitle: (value: string) => void
+  onMinutes: (value: number) => void
+  onBand: (value: PriorityBand) => void
+  onPlannedStart: (value: string) => void
+  onGoal: (value: string) => void
+  onSubmit: () => void
+  floating: boolean
+}) {
+  const activeGoals = goals.filter((goal) => goal.status === 'active')
+  const dark = 'border-0 bg-transparent p-0 text-paper outline-none placeholder:text-paper/30 focus-visible:outline-none'
+  return (
+    <form
+      className={cx(
+        'on-dark text-paper',
+        floating && 'lift rounded-lg bg-night',
+      )}
+      onSubmit={(event) => {
+        event.preventDefault()
+        onSubmit()
+      }}
+    >
+      <div className={cx(floating && 'px-6 pt-5')}>
+        {floating ? <Kicker tone="copper">写入今日</Kicker> : null}
+        <input
+          required
+          autoFocus={!floating}
+          placeholder="一件今天必须完成的事"
+          className={cx(
+            dark,
+            'w-full border-b border-white/12 py-3 text-[1.2rem] leading-8 focus:border-copper',
+            floating ? 'mt-2' : 'mt-0',
+          )}
+          value={title}
+          onChange={(event: ChangeEvent<HTMLInputElement>) => onTitle(event.target.value)}
+        />
+      </div>
+
+      <div
+        className={cx(
+          'grid grid-cols-[1fr_auto] gap-x-4 gap-y-4 sm:grid-cols-[minmax(0,1fr)_5.5rem_6.5rem]',
+          floating ? 'px-6 py-4' : 'py-4',
+        )}
+      >
+        <div className="col-span-2 sm:col-span-1">
+          <span className="font-mono text-[10px] tracking-[0.18em] text-paper/45">优先级</span>
+          <Segmented
+            name="band"
+            dark
+            className="mt-1.5"
+            value={band}
+            options={BANDS.map((item) => ({ id: item.id, label: item.label }))}
+            onChange={onBand}
+          />
+        </div>
+        <label className="block">
+          <span className="font-mono text-[10px] tracking-[0.18em] text-paper/45">分钟</span>
+          <input
+            type="number"
+            min={1}
+            inputMode="numeric"
+            className={cx(dark, 'mt-1.5 block h-10 w-full border-b border-white/12 font-mono text-[15px] tabular focus:border-copper')}
+            value={minutes}
+            onChange={(event: ChangeEvent<HTMLInputElement>) => onMinutes(Number(event.target.value))}
+          />
+        </label>
+        <label className="block">
+          <span className="font-mono text-[10px] tracking-[0.18em] text-paper/45">开始（可选）</span>
+          <input
+            type="time"
+            className={cx(dark, 'mt-1.5 block h-10 w-full border-b border-white/12 font-mono text-[15px] tabular focus:border-copper')}
+            value={plannedStart}
+            onChange={(event: ChangeEvent<HTMLInputElement>) => onPlannedStart(event.target.value)}
+          />
+        </label>
+      </div>
+
+      <div
+        className={cx(
+          'flex flex-col gap-3 border-t border-white/10 sm:flex-row sm:items-center sm:justify-between',
+          floating ? 'px-6 py-4' : 'pt-4',
+        )}
+      >
+        <div className="min-w-0 flex-1">
+          {activeGoals.length === 0 ? (
+            <Link to="/direction" className="text-[12px] text-copper hover:text-paper">
+              先去「方向」写下欲望和目标，任务才会自动对齐 →
+            </Link>
+          ) : (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Chain
+                dark
+                path={alignedPath}
+                empty="未匹配到目标"
+                className="min-w-0"
+              />
+              <label className="relative inline-flex items-center">
+                <span className="sr-only">手动对齐目标</span>
+                <select
+                  className="max-w-[12rem] cursor-pointer appearance-none border-0 bg-transparent py-1 pr-4 font-mono text-[11px] tracking-[0.12em] text-paper/55 outline-none [field-sizing:content] hover:text-paper focus-visible:text-paper"
+                  value={goalId}
+                  onChange={(event: ChangeEvent<HTMLSelectElement>) => onGoal(event.target.value)}
+                >
+                  <option value="" className="text-ink">
+                    改为：不对齐
+                  </option>
+                  {activeGoals.map((goal) => (
+                    <option key={goal.id} value={goal.id} className="text-ink">
+                      改为：{goal.title}
+                    </option>
+                  ))}
+                </select>
+                <span aria-hidden className="pointer-events-none absolute right-0 text-[10px] text-paper/45">
+                  ▾
+                </span>
+              </label>
+            </div>
+          )}
+        </div>
+        <Button type="submit" variant="copper" className="shrink-0 sm:min-w-28">
+          记下
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+function TaskNode({
   task,
   why,
   importance,
   sessionStartedAt,
   onStart,
   onComplete,
+  index,
 }: {
   task: Task
-  why: string
+  why: string[]
   importance: number
   sessionStartedAt?: string
   onStart: () => void
   onComplete: () => void
+  index: number
 }) {
   const running = task.status === 'in_progress'
   const done = task.status === 'completed'
-  const weighted = !done && importance >= 50
+  const weighted = !done && !running && importance >= 60
+  const tone = done ? 'done' : running ? 'running' : task.priorityBand
 
   return (
-    <li
-      className={`rounded-2xl border bg-snow p-4 transition-colors duration-200 ${
-        running || weighted
-          ? 'border-brass shadow-[inset_4px_0_0_0_#9a6b2f]'
-          : done
-            ? 'border-line opacity-70'
-            : 'border-line'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className={`text-base font-medium ${done ? 'line-through' : ''}`}>
+    <SpineNode tone={tone} index={index}>
+      <div
+        className={cx(
+          'group -mx-3 flex flex-col gap-3 rounded-md px-3 py-2.5 transition-colors duration-200 sm:flex-row sm:items-start',
+          !done && 'hover:bg-paper/80',
+        )}
+      >
+        <div className="min-w-0 flex-1">
+          <p
+            className={cx(
+              'text-[16px] leading-7 transition-colors duration-300',
+              done ? 'text-mute line-through decoration-line-strong' : 'font-medium text-ink',
+            )}
+          >
             {task.title}
+            {weighted ? (
+              <span className="ml-2 align-middle font-mono text-[10px] tracking-[0.18em] text-copper">
+                高权重
+              </span>
+            ) : null}
           </p>
-          <p className="mt-1 font-mono text-xs text-mute">
+          <p className="mt-0.5 font-mono text-[12px] text-mute tabular">
             {task.plannedMinutes} min
             {task.plannedStart ? ` · ${task.plannedStart}` : ''}
             {' · '}
-            {labelStatus(task.status)}
-            {running && sessionStartedAt ? (
-              <Elapsed startedAt={sessionStartedAt} />
-            ) : null}
+            <span className={running ? 'text-copper' : ''}>{labelStatus(task.status)}</span>
+            {running && sessionStartedAt ? <Elapsed startedAt={sessionStartedAt} /> : null}
           </p>
-          <p className={`mt-2 text-xs ${task.primaryGoalId ? 'text-ink' : 'text-mute'}`}>
-            {why}
-          </p>
+          <Chain path={why} className="mt-1.5" />
         </div>
-        <div className="flex shrink-0 gap-2">
-          {task.status !== 'completed' && task.status !== 'in_progress' && (
-            <button
-              type="button"
-              className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-lg border border-line px-3 text-sm transition-colors duration-200 hover:border-ink"
-              onClick={onStart}
-            >
-              <Play className="size-3.5" aria-hidden />
-              开始
-            </button>
-          )}
-          {task.status !== 'completed' && (
-            <button
-              type="button"
-              className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-lg bg-ink px-3 text-sm text-snow transition-colors duration-200 hover:bg-brass hover:text-ink"
-              onClick={onComplete}
-            >
+        {!done ? (
+          <div className="flex shrink-0 gap-1.5 sm:pt-0.5">
+            {!running ? (
+              <Button variant="ghost" size="sm" onClick={onStart}>
+                <Play className="size-3.5" aria-hidden />
+                开始
+              </Button>
+            ) : null}
+            <Button variant={running ? 'copper' : 'solid'} size="sm" onClick={onComplete}>
               {running ? (
                 <Square className="size-3.5" aria-hidden />
               ) : (
                 <Check className="size-3.5" aria-hidden />
               )}
               完成
-            </button>
-          )}
-        </div>
+            </Button>
+          </div>
+        ) : null}
       </div>
-    </li>
+    </SpineNode>
   )
 }
 
@@ -543,17 +810,22 @@ function Elapsed({ startedAt }: { startedAt: string }) {
     const id = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(id)
   }, [])
-  const minutes = Math.max(0, Math.floor((now - new Date(startedAt).getTime()) / 60_000))
-  const seconds = Math.max(
-    0,
-    Math.floor(((now - new Date(startedAt).getTime()) % 60_000) / 1000),
-  )
+  const elapsed = Math.max(0, now - new Date(startedAt).getTime())
+  const minutes = Math.floor(elapsed / 60_000)
+  const seconds = Math.floor((elapsed % 60_000) / 1000)
   return (
-    <span className="text-brass">
-      {' · '}
+    <span className="text-copper">
+      {' '}
       {String(minutes).padStart(2, '0')}:{String(seconds).padStart(2, '0')}
     </span>
   )
+}
+
+function formatHours(minutes: number): string {
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  if (h === 0) return `${m} 分钟`
+  return `${h} 小时 ${String(m).padStart(2, '0')} 分`
 }
 
 function labelStatus(status: Task['status']): string {

@@ -17,8 +17,10 @@ export default function App() {
             path="review"
             element={
               <PlaceholderPage
+                kicker="Review"
                 title="复盘"
-                note="未完成的 MUST 会在这里关账。现在先保证今日能记下来。"
+                lede="一天结束时，每一件没完成的 MUST 都要给出原因。失败是数据，不是罪名。"
+                note="未完成的 MUST 会在这里关账并归因。现在先保证今日能记下来、能开始、能完成。"
               />
             }
           />
@@ -26,8 +28,10 @@ export default function App() {
             path="analytics"
             element={
               <PlaceholderPage
+                kicker="Analytics"
                 title="分析"
-                note="MUST 完成率、估时偏差和原因分布，等有几天真实数据再加。"
+                lede="只看事实：MUST 完成率、估时偏差、未完成原因分布，以及时间是否流向了你说重要的方向。"
+                note="需要几天真实记录才有意义。先用上几天，再回来看。"
               />
             }
           />
