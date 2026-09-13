@@ -1,7 +1,14 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Check, Play, Square } from 'lucide-react'
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { addTaskEvent, db, ensureDailyPlan, newId } from '../db/db'
+import {
+  importanceScore,
+  suggestAlignment,
+  whyLine,
+  whyPathFor,
+} from '../domain/alignment'
 import { todayKey } from '../domain/clock'
 import type { PriorityBand, Task } from '../domain/types'
 
@@ -23,6 +30,9 @@ export function TodayPage() {
   const [capacityDraft, setCapacityDraft] = useState(240)
   const [completeTask, setCompleteTask] = useState<Task | null>(null)
   const [manualMinutes, setManualMinutes] = useState(0)
+  const [goalId, setGoalId] = useState('')
+  const [commitmentId, setCommitmentId] = useState('')
+  const [manualAlign, setManualAlign] = useState(false)
 
   const plan = useLiveQuery(() => db.dailyPlans.get(date), [date])
   const tasks = useLiveQuery(
@@ -30,6 +40,9 @@ export function TodayPage() {
     [date],
   )
   const sessions = useLiveQuery(() => db.workSessions.toArray(), [])
+  const desires = useLiveQuery(() => db.desires.toArray(), [])
+  const goals = useLiveQuery(() => db.goals.toArray(), [])
+  const commitments = useLiveQuery(() => db.commitments.toArray(), [])
 
   useEffect(() => {
     void ensureDailyPlan(date)
@@ -47,7 +60,40 @@ export function TodayPage() {
     return map
   }, [sessions])
 
+  const suggestion = useMemo(
+    () =>
+      suggestAlignment(
+        title,
+        goals ?? [],
+        desires ?? [],
+        commitments ?? [],
+      ),
+    [title, goals, desires, commitments],
+  )
+
+  useEffect(() => {
+    if (manualAlign) return
+    setGoalId(suggestion.goalId ?? '')
+    setCommitmentId(suggestion.commitmentId ?? '')
+  }, [suggestion, manualAlign])
+
+  const alignedPath = useMemo(() => {
+    const goal = (goals ?? []).find((item) => item.id === goalId)
+    const desire = (desires ?? []).find((item) => item.id === goal?.primaryDesireId)
+    const commitment = (commitments ?? []).find((item) => item.id === commitmentId)
+    return whyPathFor(goal, desire, commitment)
+  }, [goalId, commitmentId, goals, desires, commitments])
+
   const visibleTasks = (tasks ?? []).filter((task) => task.status !== 'cancelled')
+
+  function rankTask(task: Task): number {
+    const goal = (goals ?? []).find((item) => item.id === task.primaryGoalId)
+    const desire = (desires ?? []).find((item) => item.id === goal?.primaryDesireId)
+    const commitment = (commitments ?? []).find(
+      (item) => item.id === task.primaryCommitmentId,
+    )
+    return importanceScore(task.priorityBand, desire, commitment)
+  }
   const plannedMust = visibleTasks
     .filter((task) => task.priorityBand === 'must')
     .reduce((sum, task) => sum + task.plannedMinutes, 0)
@@ -75,11 +121,14 @@ export function TodayPage() {
       priorityBand: band,
       plannedMinutes: minutes,
       status: 'planned',
+      primaryGoalId: goalId || undefined,
+      primaryCommitmentId: commitmentId || undefined,
       createdAt: new Date().toISOString(),
     }
     await db.tasks.add(task)
     setTitle('')
     setPlannedStart('')
+    setManualAlign(false)
   }
 
   async function startTask(task: Task) {
@@ -214,9 +263,10 @@ export function TodayPage() {
             placeholder="一件今天必须完成的事"
             className="mt-3 w-full border-0 bg-transparent p-0 text-lg text-snow outline-none placeholder:text-white/30 focus-visible:outline-none"
             value={title}
-            onChange={(event: ChangeEvent<HTMLInputElement>) =>
+            onChange={(event: ChangeEvent<HTMLInputElement>) => {
               setTitle(event.target.value)
-            }
+              setManualAlign(false)
+            }}
           />
         </label>
         <div className="mt-5 grid grid-cols-2 border-t border-white/10 sm:grid-cols-[6.5rem_minmax(0,1fr)_8rem_5.5rem]">
@@ -272,10 +322,49 @@ export function TodayPage() {
             记下
           </button>
         </div>
+        <div className="flex flex-col gap-2 border-t border-white/10 px-4 py-3 text-xs sm:flex-row sm:items-center sm:justify-between">
+          {(goals ?? []).length === 0 ? (
+            <Link to="/direction" className="text-brass hover:text-snow">
+              先去「方向」写下欲望和目标，任务才能自动对齐
+            </Link>
+          ) : (
+            <>
+              <p className="min-w-0 flex-1 text-white/60">
+                {alignedPath.length > 0
+                  ? `自动对齐 · ${whyLine(alignedPath)}`
+                  : '尚未匹配到目标，可手动选择'}
+              </p>
+              <select
+                className="max-w-[14rem] rounded-md border border-white/15 bg-transparent px-2 py-2 text-snow"
+                value={goalId}
+                onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                  setManualAlign(true)
+                  setGoalId(event.target.value)
+                  const goal = (goals ?? []).find((item) => item.id === event.target.value)
+                  const linked = (commitments ?? []).find(
+                    (item) => item.primaryGoalId === goal?.id && item.state === 'active',
+                  )
+                  setCommitmentId(linked?.id ?? '')
+                }}
+              >
+                <option value="">不对齐</option>
+                {(goals ?? [])
+                  .filter((goal) => goal.status === 'active')
+                  .map((goal) => (
+                    <option key={goal.id} value={goal.id}>
+                      {goal.title}
+                    </option>
+                  ))}
+              </select>
+            </>
+          )}
+        </div>
       </form>
 
       {BANDS.map((item) => {
-        const list = visibleTasks.filter((task) => task.priorityBand === item.id)
+        const list = visibleTasks
+          .filter((task) => task.priorityBand === item.id)
+          .sort((left, right) => rankTask(right) - rankTask(left))
         if (item.id !== 'must' && list.length === 0) return null
         return (
           <section key={item.id} className="mt-10">
@@ -295,6 +384,21 @@ export function TodayPage() {
                   <TaskCard
                     key={task.id}
                     task={task}
+                    why={whyLine(
+                      whyPathFor(
+                        (goals ?? []).find((item) => item.id === task.primaryGoalId),
+                        (desires ?? []).find(
+                          (item) =>
+                            item.id ===
+                            (goals ?? []).find((goal) => goal.id === task.primaryGoalId)
+                              ?.primaryDesireId,
+                        ),
+                        (commitments ?? []).find(
+                          (item) => item.id === task.primaryCommitmentId,
+                        ),
+                      ),
+                    )}
+                    importance={rankTask(task)}
                     sessionStartedAt={
                       openSessions.has(task.id)
                         ? sessions?.find((session) => session.id === openSessions.get(task.id))
@@ -357,22 +461,27 @@ export function TodayPage() {
 
 function TaskCard({
   task,
+  why,
+  importance,
   sessionStartedAt,
   onStart,
   onComplete,
 }: {
   task: Task
+  why: string
+  importance: number
   sessionStartedAt?: string
   onStart: () => void
   onComplete: () => void
 }) {
   const running = task.status === 'in_progress'
   const done = task.status === 'completed'
+  const weighted = !done && importance >= 50
 
   return (
     <li
       className={`rounded-2xl border bg-snow p-4 transition-colors duration-200 ${
-        running
+        running || weighted
           ? 'border-brass shadow-[inset_4px_0_0_0_#9a6b2f]'
           : done
             ? 'border-line opacity-70'
@@ -393,7 +502,9 @@ function TaskCard({
               <Elapsed startedAt={sessionStartedAt} />
             ) : null}
           </p>
-          <p className="mt-2 text-xs text-mute">未挂方向</p>
+          <p className={`mt-2 text-xs ${task.primaryGoalId ? 'text-ink' : 'text-mute'}`}>
+            {why}
+          </p>
         </div>
         <div className="flex shrink-0 gap-2">
           {task.status !== 'completed' && task.status !== 'in_progress' && (

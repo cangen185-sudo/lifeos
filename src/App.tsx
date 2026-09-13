@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from './app/AppShell'
+import { DirectionPage } from './pages/DirectionPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
 import { TodayPage } from './pages/TodayPage'
 
@@ -11,15 +12,7 @@ export default function App() {
       <Routes>
         <Route element={<AppShell />}>
           <Route index element={<TodayPage />} />
-          <Route
-            path="direction"
-            element={
-              <PlaceholderPage
-                title="方向"
-                note="Desire、Goal、Commitment 会在这里。今天可以先把 MUST 写下来，方向后补。"
-              />
-            }
-          />
+          <Route path="direction" element={<DirectionPage />} />
           <Route
             path="review"
             element={

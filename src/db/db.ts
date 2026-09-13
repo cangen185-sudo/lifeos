@@ -1,11 +1,22 @@
 import Dexie, { type Table } from 'dexie'
-import type { DailyPlan, Task, TaskEvent, WorkSession } from '../domain/types'
+import type {
+  Commitment,
+  DailyPlan,
+  Desire,
+  Goal,
+  Task,
+  TaskEvent,
+  WorkSession,
+} from '../domain/types'
 
 export class LifeOSDatabase extends Dexie {
   dailyPlans!: Table<DailyPlan, string>
   tasks!: Table<Task, string>
   workSessions!: Table<WorkSession, string>
   taskEvents!: Table<TaskEvent, string>
+  desires!: Table<Desire, string>
+  goals!: Table<Goal, string>
+  commitments!: Table<Commitment, string>
 
   constructor() {
     super('lifeos')
@@ -14,6 +25,15 @@ export class LifeOSDatabase extends Dexie {
       tasks: 'id, plannedDate, status, priorityBand',
       workSessions: 'id, taskId, startedAt',
       taskEvents: 'id, taskId, createdAt, type',
+    })
+    this.version(2).stores({
+      dailyPlans: 'date',
+      tasks: 'id, plannedDate, status, priorityBand, primaryGoalId, primaryCommitmentId',
+      workSessions: 'id, taskId, startedAt',
+      taskEvents: 'id, taskId, createdAt, type',
+      desires: 'id, active, importance',
+      goals: 'id, status, primaryDesireId',
+      commitments: 'id, state, primaryGoalId, endAt',
     })
   }
 }
