@@ -15,8 +15,8 @@ export default function App() {
             path="direction"
             element={
               <PlaceholderPage
-                title="Direction"
-                note="Desire / Goal / Commitment 还没做。今天可以先把 MUST 写下来，方向后补。"
+                title="方向"
+                note="Desire、Goal、Commitment 会在这里。今天可以先把 MUST 写下来，方向后补。"
               />
             }
           />
@@ -24,8 +24,8 @@ export default function App() {
             path="review"
             element={
               <PlaceholderPage
-                title="Review"
-                note="日终复盘会在你需要关账的时候再做。现在先保证 Today 能记下来。"
+                title="复盘"
+                note="未完成的 MUST 会在这里关账。现在先保证今日能记下来。"
               />
             }
           />
@@ -33,8 +33,8 @@ export default function App() {
             path="analytics"
             element={
               <PlaceholderPage
-                title="Analytics"
-                note="完成率、估时偏差和原因分布会等有几天数据再加。"
+                title="分析"
+                note="MUST 完成率、估时偏差和原因分布，等有几天真实数据再加。"
               />
             }
           />

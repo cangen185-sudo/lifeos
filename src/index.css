@@ -1,15 +1,24 @@
 @import "tailwindcss";
 
+@theme {
+  --color-paper: #e4e9ef;
+  --color-snow: #f4f6f8;
+  --color-ink: #15202b;
+  --color-mute: #5b6b79;
+  --color-line: #c9d3dd;
+  --color-brass: #9a6b2f;
+  --color-brass-soft: #f3e6d2;
+  --color-sage: #3d6a56;
+  --color-dock: #11181f;
+  --font-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-display: "Source Serif 4", "Noto Serif SC", serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
 :root {
   color-scheme: light;
-  --bg: #f4f1ea;
-  --ink: #1c1917;
-  --muted: #78716c;
-  --card: #fffefb;
-  --line: #e7e5e4;
-  --accent: #1c1917;
-  font-family: ui-sans-serif, system-ui, "Segoe UI", "PingFang SC",
-    "Microsoft YaHei", sans-serif;
+  --bg: #e4e9ef;
+  --shadow: 0 1px 0 rgba(21, 32, 43, 0.04);
 }
 
 * {
@@ -24,8 +33,13 @@ body,
 
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--ink);
+  background:
+    radial-gradient(1200px 420px at 50% -120px, rgba(154, 107, 47, 0.08), transparent 55%),
+    var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.55;
 }
 
 button,
@@ -34,6 +48,33 @@ select {
   font: inherit;
 }
 
-button {
+button,
+[role="button"],
+label.cursor-pointer {
   cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brass);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: var(--color-brass-soft);
+  color: var(--color-ink);
+}
+
+input[type='time']::-webkit-calendar-picker-indicator {
+  opacity: 0.45;
+  cursor: pointer;
+  filter: invert(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }
