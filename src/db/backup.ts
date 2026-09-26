@@ -1,9 +1,10 @@
 import { db } from './db'
+import { parseBackup } from './backupSchema'
 import type { BackupPayload } from '../domain/types'
 
 export async function exportBackup(): Promise<BackupPayload> {
   const [dailyPlans, tasks, workSessions, taskEvents, desires, goals, commitments] =
-    await Promise.all([
+    await db.transaction('r', db.tables, () => Promise.all([
       db.dailyPlans.toArray(),
       db.tasks.toArray(),
       db.workSessions.toArray(),
@@ -11,7 +12,7 @@ export async function exportBackup(): Promise<BackupPayload> {
       db.desires.toArray(),
       db.goals.toArray(),
       db.commitments.toArray(),
-    ])
+    ]))
   return {
     version: 2,
     exportedAt: new Date().toISOString(),
@@ -37,43 +38,18 @@ export function downloadBackup(payload: BackupPayload): void {
   URL.revokeObjectURL(url)
 }
 
-function isBackupPayload(value: unknown): value is BackupPayload {
-  if (!value || typeof value !== 'object') return false
-  const record = value as Partial<BackupPayload>
-  return (
-    (record.version === 1 || record.version === 2) &&
-    Array.isArray(record.dailyPlans) &&
-    Array.isArray(record.tasks) &&
-    Array.isArray(record.workSessions) &&
-    Array.isArray(record.taskEvents)
-  )
-}
-
 export async function importBackup(text: string): Promise<void> {
-  const parsed: unknown = JSON.parse(text)
-  if (!isBackupPayload(parsed)) {
-    throw new Error('备份文件格式不正确')
-  }
+  const parsed = parseBackup(text)
   await db.transaction('rw', db.tables, async () => {
-      await Promise.all([
-        db.dailyPlans.clear(),
-        db.tasks.clear(),
-        db.workSessions.clear(),
-        db.taskEvents.clear(),
-        db.desires.clear(),
-        db.goals.clear(),
-        db.commitments.clear(),
-      ])
+      for (const table of db.tables) await table.clear()
       await Promise.all([
         db.dailyPlans.bulkAdd(parsed.dailyPlans),
         db.tasks.bulkAdd(parsed.tasks),
         db.workSessions.bulkAdd(parsed.workSessions),
         db.taskEvents.bulkAdd(parsed.taskEvents),
-        parsed.desires?.length ? db.desires.bulkAdd(parsed.desires) : Promise.resolve(),
-        parsed.goals?.length ? db.goals.bulkAdd(parsed.goals) : Promise.resolve(),
-        parsed.commitments?.length
-          ? db.commitments.bulkAdd(parsed.commitments)
-          : Promise.resolve(),
+        db.desires.bulkAdd(parsed.desires ?? []),
+        db.goals.bulkAdd(parsed.goals ?? []),
+        db.commitments.bulkAdd(parsed.commitments ?? []),
       ])
   })
 }
