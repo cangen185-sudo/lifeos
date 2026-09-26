@@ -14,7 +14,8 @@ import { Dialog } from '../components/ui/Dialog'
 import { Meter } from '../components/ui/Meter'
 import { Button, Input, Kicker, Segmented, cx } from '../components/ui/primitives'
 import { Spine, SpineNode } from '../components/ui/Spine'
-import { addTaskEvent, db, ensureDailyPlan, newId } from '../db/db'
+import { finishTask, startTask } from '../application/taskCommands'
+import { db, ensureDailyPlan, newId } from '../db/db'
 import {
   importanceScore,
   suggestAlignment,
@@ -66,6 +67,8 @@ export function TodayPage() {
   const [commitmentId, setCommitmentId] = useState('')
   const [manualAlign, setManualAlign] = useState(false)
   const [composerOpen, setComposerOpen] = useState(false)
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null)
+  const [taskError, setTaskError] = useState<string | null>(null)
 
   const plan = useLiveQuery(() => db.dailyPlans.get(date), [date])
   const tasks = useLiveQuery(
@@ -172,42 +175,23 @@ export function TodayPage() {
     setComposerOpen(false)
   }
 
-  async function startTask(task: Task) {
-    if (task.status === 'completed' || task.status === 'cancelled') return
-    await db.workSessions.add({
-      id: newId(),
-      taskId: task.id,
-      startedAt: new Date().toISOString(),
-    })
-    await db.tasks.update(task.id, { status: 'in_progress' })
-    await addTaskEvent(task.id, 'started', { before: task.status, after: 'in_progress' })
-  }
-
-  async function finishTask(task: Task, actualMinutes: number) {
-    const openId = openSessions.get(task.id)
-    const stamp = new Date().toISOString()
-    if (openId) {
-      const session = await db.workSessions.get(openId)
-      const started = session ? new Date(session.startedAt).getTime() : Date.now()
-      const computed = Math.max(1, Math.round((Date.now() - started) / 60_000))
-      await db.workSessions.update(openId, { endedAt: stamp, actualMinutes: computed })
-    } else {
-      await db.workSessions.add({
-        id: newId(),
-        taskId: task.id,
-        startedAt: stamp,
-        endedAt: stamp,
-        actualMinutes,
-      })
+  async function runTaskCommand(taskId: string, action: () => Promise<unknown>) {
+    if (pendingTaskId) return
+    setPendingTaskId(taskId)
+    setTaskError(null)
+    try {
+      await action()
+      setCompleteTask(null)
+    } catch (error) {
+      setTaskError(error instanceof Error ? error.message : '操作失败，请重试')
+    } finally {
+      setPendingTaskId(null)
     }
-    await db.tasks.update(task.id, { status: 'completed', completedAt: stamp })
-    await addTaskEvent(task.id, 'completed', { before: task.status, after: 'completed' })
-    setCompleteTask(null)
   }
 
   function requestComplete(task: Task) {
     if (openSessions.has(task.id)) {
-      void finishTask(task, 0)
+      void runTaskCommand(task.id, () => finishTask(task.id))
       return
     }
     setManualMinutes(task.plannedMinutes)
@@ -255,6 +239,11 @@ export function TodayPage() {
   return (
     <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_17rem] lg:gap-16 xl:grid-cols-[minmax(0,1fr)_19rem]">
       <section className="min-w-0">
+        {taskError && !completeTask ? (
+          <p role="alert" className="mb-5 rounded-md border border-copper/40 bg-copper-soft p-3 text-sm text-ink">
+            {taskError}
+          </p>
+        ) : null}
         <header className="rise">
           <Kicker>
             {date} · {WEEKDAYS[now.getDay()]}
@@ -347,7 +336,8 @@ export function TodayPage() {
                                   ?.startedAt
                               : undefined
                           }
-                          onStart={() => void startTask(task)}
+                          busy={pendingTaskId === task.id}
+                          onStart={() => void runTaskCommand(task.id, () => startTask(task.id))}
                           onComplete={() => requestComplete(task)}
                         />
                       )
@@ -494,12 +484,15 @@ export function TodayPage() {
         <form
           onSubmit={(event: FormEvent) => {
             event.preventDefault()
-            if (completeTask) void finishTask(completeTask, manualMinutes)
+            if (completeTask) {
+              void runTaskCommand(completeTask.id, () => finishTask(completeTask.id, manualMinutes))
+            }
           }}
         >
           <p className="text-sm leading-7 text-mute">
             这次没有点「开始」。请手填实际分钟，不会自动等于计划时长。
           </p>
+          {taskError ? <p role="alert" className="mt-3 text-sm text-copper">{taskError}</p> : null}
           <div className="mt-4 flex items-baseline gap-3">
             <Input
               type="number"
@@ -518,7 +511,7 @@ export function TodayPage() {
             <Button type="button" variant="ghost" className="flex-1" onClick={closeComplete}>
               取消
             </Button>
-            <Button type="submit" variant="solid" className="flex-1">
+            <Button type="submit" variant="solid" className="flex-1" disabled={pendingTaskId !== null}>
               确认完成
             </Button>
           </div>
@@ -735,6 +728,7 @@ function TaskNode({
   sessionStartedAt,
   onStart,
   onComplete,
+  busy,
   index,
 }: {
   task: Task
@@ -743,6 +737,7 @@ function TaskNode({
   sessionStartedAt?: string
   onStart: () => void
   onComplete: () => void
+  busy: boolean
   index: number
 }) {
   const running = task.status === 'in_progress'
@@ -784,12 +779,12 @@ function TaskNode({
         {!done ? (
           <div className="flex shrink-0 gap-1.5 sm:pt-0.5">
             {!running ? (
-              <Button variant="ghost" size="sm" onClick={onStart}>
+              <Button variant="ghost" size="sm" onClick={onStart} disabled={busy}>
                 <Play className="size-3.5" aria-hidden />
                 开始
               </Button>
             ) : null}
-            <Button variant={running ? 'copper' : 'solid'} size="sm" onClick={onComplete}>
+            <Button variant={running ? 'copper' : 'solid'} size="sm" onClick={onComplete} disabled={busy}>
               {running ? (
                 <Square className="size-3.5" aria-hidden />
               ) : (
