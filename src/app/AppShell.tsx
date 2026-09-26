@@ -11,6 +11,8 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Dialog } from '../components/ui/Dialog'
 import { Button, cx } from '../components/ui/primitives'
 import { downloadBackup, exportBackup, importBackup } from '../db/backup'
+import { parseBackup } from '../db/backupSchema'
+import type { BackupPayload } from '../domain/types'
 
 const nav = [
   { to: '/', label: '今日', hint: 'Today', icon: SunMedium, end: true },
@@ -23,7 +25,10 @@ type Notice = { title: string; body: string } | null
 
 export function AppShell() {
   const location = useLocation()
-  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [pendingImport, setPendingImport] = useState<{
+    name: string; text: string; payload: BackupPayload
+  } | null>(null)
+  const [importing, setImporting] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
 
   function isCurrent(to: string, end?: boolean) {
@@ -36,21 +41,34 @@ export function AppShell() {
     downloadBackup(payload)
   }
 
-  const closeImport = useCallback(() => setPendingFile(null), [])
+  const closeImport = useCallback(() => { if (!importing) setPendingImport(null) }, [importing])
   const closeNotice = useCallback(() => setNotice(null), [])
 
-  async function confirmImport() {
-    if (!pendingFile) return
+  async function onPick(file: File) {
     try {
-      await importBackup(await pendingFile.text())
-      setPendingFile(null)
+      const text = await file.text()
+      const payload = parseBackup(text)
+      setPendingImport({ name: file.name, text, payload })
+    } catch (error) {
+      setNotice({ title: '导入失败', body: error instanceof Error ? error.message : '文件无法识别。' })
+    }
+  }
+
+  async function confirmImport() {
+    if (!pendingImport || importing) return
+    setImporting(true)
+    try {
+      await importBackup(pendingImport.text)
+      setPendingImport(null)
       setNotice({ title: '已导入', body: '本机数据已替换为备份文件中的内容。' })
     } catch (error) {
-      setPendingFile(null)
+      setPendingImport(null)
       setNotice({
         title: '导入失败',
         body: error instanceof Error ? error.message : '文件无法识别。',
       })
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -90,7 +108,7 @@ export function AppShell() {
           })}
         </nav>
         <div className="mt-8 border-t border-line pt-5">
-          <BackupButtons onExport={onExport} onPick={setPendingFile} />
+          <BackupButtons onExport={onExport} onPick={onPick} />
           <p className="mt-4 font-mono text-[10px] tracking-[0.18em] text-faint">
             本机数据 · V0.1
           </p>
@@ -100,7 +118,7 @@ export function AppShell() {
       <div className="flex min-h-svh flex-col">
         <header className="flex items-center justify-between px-5 pb-2 pt-[max(env(safe-area-inset-top),1.25rem)] md:hidden">
           <Wordmark compact />
-          <BackupButtons onExport={onExport} onPick={setPendingFile} compact />
+          <BackupButtons onExport={onExport} onPick={onPick} compact />
         </header>
 
         <main className="mx-auto w-full max-w-[72rem] flex-1 px-5 pb-32 pt-4 md:px-10 md:pb-16 md:pt-12 xl:px-14">
@@ -143,22 +161,30 @@ export function AppShell() {
       </nav>
 
       <Dialog
-        open={pendingFile !== null}
+        open={pendingImport !== null}
         onClose={closeImport}
         kicker="Import"
         title="用备份覆盖本机数据？"
         mode="center"
       >
         <p className="text-sm leading-7 text-mute">
-          将导入 <span className="font-mono text-ink">{pendingFile?.name}</span>
+          将导入 <span className="font-mono text-ink">{pendingImport?.name}</span>
           。这台设备上的现有任务、方向与记录会被替换，且无法撤销。建议先导出一份当前数据。
         </p>
+        {pendingImport && (
+          <p className="mt-3 text-sm leading-7 text-mute">
+            版本 {pendingImport.payload.version} · 任务 {pendingImport.payload.tasks.length} 条 ·
+            计时 {pendingImport.payload.workSessions.length} 条 · 事件 {pendingImport.payload.taskEvents.length} 条 ·
+            日计划 {pendingImport.payload.dailyPlans.length} 条 · 方向 {pendingImport.payload.desires?.length ?? 0} 条 ·
+            目标 {pendingImport.payload.goals?.length ?? 0} 条 · 承诺 {pendingImport.payload.commitments?.length ?? 0} 条
+          </p>
+        )}
         <div className="mt-6 flex gap-2">
-          <Button variant="ghost" className="flex-1" onClick={closeImport}>
+          <Button variant="ghost" className="flex-1" onClick={closeImport} disabled={importing}>
             取消
           </Button>
-          <Button variant="solid" className="flex-1" onClick={() => void confirmImport()}>
-            覆盖并导入
+          <Button variant="solid" className="flex-1" onClick={() => void confirmImport()} disabled={importing}>
+            {importing ? '正在导入…' : '覆盖并导入'}
           </Button>
         </div>
       </Dialog>
