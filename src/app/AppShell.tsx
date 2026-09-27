@@ -7,7 +7,7 @@ import {
   Upload,
 } from 'lucide-react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useCallback, useState } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Dialog } from '../components/ui/Dialog'
 import { Button, cx } from '../components/ui/primitives'
@@ -15,6 +15,7 @@ import { downloadBackup, exportBackup, importBackup } from '../db/backup'
 import { parseBackup } from '../db/backupSchema'
 import type { BackupPayload } from '../domain/types'
 import { db } from '../db/db'
+import { getLocalFileStatus, subscribeLocalFileStatus } from '../db/localFileSync'
 import { isOpenStatus } from '../domain/review'
 import { useLocalDate } from '../hooks/useLocalDate'
 
@@ -29,6 +30,14 @@ type Notice = { title: string; body: string } | null
 
 export function AppShell() {
   const location = useLocation()
+  const localSave = useSyncExternalStore(subscribeLocalFileStatus, getLocalFileStatus)
+  const saveLabel = localSave.mode === 'browser'
+    ? '当前入口仅浏览器存储；长期使用请双击 Open-LifeOS.cmd'
+    : localSave.state === 'saved'
+      ? '本地文件已保存'
+      : localSave.state === 'saving' ? '正在保存本地文件…'
+        : localSave.state === 'connecting' ? '正在读取本地文件…'
+          : localSave.message ?? '本地文件需要检查'
   const [pendingImport, setPendingImport] = useState<{
     name: string; text: string; payload: BackupPayload
   } | null>(null)
@@ -124,9 +133,9 @@ export function AppShell() {
         </nav>
         <div className="mt-8 border-t border-line pt-5">
           <BackupButtons onExport={onExport} onPick={onPick} />
-          <p className="mt-4 font-mono text-[10px] tracking-[0.18em] text-faint">
-            本机数据 · V0.1
-          </p>
+          <p role={localSave.state === 'error' || localSave.state === 'conflict' ? 'alert' : undefined}
+            className="mt-4 text-[11px] leading-5 text-mute">{saveLabel}</p>
+          {localSave.dataFile ? <p className="mt-1 break-all font-mono text-[10px] leading-4 text-faint">{localSave.dataFile}</p> : null}
         </div>
       </aside>
 
@@ -135,6 +144,8 @@ export function AppShell() {
           <Wordmark compact />
           <BackupButtons onExport={onExport} onPick={onPick} compact />
         </header>
+        <p role={localSave.state === 'error' || localSave.state === 'conflict' ? 'alert' : undefined}
+          className="px-5 pb-2 text-[11px] leading-5 text-mute md:hidden">{saveLabel}</p>
 
         <main className="mx-auto w-full max-w-[72rem] flex-1 px-5 pb-32 pt-4 md:px-10 md:pb-16 md:pt-12 xl:px-14">
           <Outlet />
