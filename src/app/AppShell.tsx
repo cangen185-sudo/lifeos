@@ -6,6 +6,7 @@ import {
   SunMedium,
   Upload,
 } from 'lucide-react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { useCallback, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Dialog } from '../components/ui/Dialog'
@@ -13,6 +14,9 @@ import { Button, cx } from '../components/ui/primitives'
 import { downloadBackup, exportBackup, importBackup } from '../db/backup'
 import { parseBackup } from '../db/backupSchema'
 import type { BackupPayload } from '../domain/types'
+import { db } from '../db/db'
+import { isOpenStatus } from '../domain/review'
+import { useLocalDate } from '../hooks/useLocalDate'
 
 const nav = [
   { to: '/', label: '今日', hint: 'Today', icon: SunMedium, end: true },
@@ -30,6 +34,14 @@ export function AppShell() {
   } | null>(null)
   const [importing, setImporting] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
+  const today = useLocalDate()
+  const reviewDue =
+    useLiveQuery(async () => {
+      const tasks = await db.tasks.toArray()
+      return tasks.filter((task) =>
+        Boolean(task.plannedDate) && task.plannedDate! < today &&
+        task.priorityBand === 'must' && isOpenStatus(task.status)).length
+    }, [today]) ?? 0
 
   function isCurrent(to: string, end?: boolean) {
     if (end) return location.pathname === '/' || location.pathname === ''
@@ -100,6 +112,9 @@ export function AppShell() {
                 />
                 <item.icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
                 <span className={active ? 'font-medium' : ''}>{item.label}</span>
+                {item.to === '/review' && reviewDue > 0 ? (
+                  <span className="size-1.5 rounded-full bg-copper" aria-label={`${reviewDue} 件过往 MUST 未关账`} />
+                ) : null}
                 <span className="ml-auto font-mono text-[10px] tracking-[0.18em] text-faint">
                   {item.hint}
                 </span>
@@ -138,6 +153,7 @@ export function AppShell() {
                 <NavLink
                   to={item.to}
                   end={item.end}
+                  aria-label={item.label}
                   aria-current={active ? 'page' : undefined}
                   className={cx(
                     'relative flex min-h-16 flex-col items-center justify-center gap-1 text-[11px] transition-colors duration-200',
@@ -151,7 +167,12 @@ export function AppShell() {
                       active ? 'bg-copper' : 'bg-transparent',
                     )}
                   />
-                  <item.icon className="size-5" strokeWidth={active ? 2 : 1.6} aria-hidden />
+                  <span className="relative">
+                    <item.icon className="size-5" strokeWidth={active ? 2 : 1.6} aria-hidden />
+                    {item.to === '/review' && reviewDue > 0 ? (
+                      <span className="absolute -right-1 -top-0.5 size-1.5 rounded-full bg-copper" />
+                    ) : null}
+                  </span>
                   {item.label}
                 </NavLink>
               </li>
@@ -176,7 +197,8 @@ export function AppShell() {
             版本 {pendingImport.payload.version} · 任务 {pendingImport.payload.tasks.length} 条 ·
             计时 {pendingImport.payload.workSessions.length} 条 · 事件 {pendingImport.payload.taskEvents.length} 条 ·
             日计划 {pendingImport.payload.dailyPlans.length} 条 · 方向 {pendingImport.payload.desires?.length ?? 0} 条 ·
-            目标 {pendingImport.payload.goals?.length ?? 0} 条 · 承诺 {pendingImport.payload.commitments?.length ?? 0} 条
+            目标 {pendingImport.payload.goals?.length ?? 0} 条 · 承诺 {pendingImport.payload.commitments?.length ?? 0} 条 ·
+            日结 {pendingImport.payload.dailyReviews?.length ?? 0} 天 · 应用内提示 {pendingImport.payload.interventionEvents?.length ?? 0} 条
           </p>
         )}
         <div className="mt-6 flex gap-2">
@@ -211,7 +233,7 @@ function Wordmark({ compact = false }: { compact?: boolean }) {
     <div>
       <p
         className={cx(
-          'font-display leading-none tracking-tight text-ink',
+          'font-display leading-none text-ink',
           compact ? 'text-[1.35rem]' : 'text-[1.9rem]',
         )}
       >

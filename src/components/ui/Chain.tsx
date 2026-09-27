@@ -8,7 +8,7 @@ export function Chain({
   path,
   className,
   dark = false,
-  empty = '未对齐人生方向',
+  empty = '未对齐',
 }: {
   path: string[]
   className?: string

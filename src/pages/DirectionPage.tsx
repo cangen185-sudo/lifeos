@@ -14,6 +14,11 @@ import {
 import { Spine, SpineNode } from '../components/ui/Spine'
 import { db, newId } from '../db/db'
 import { todayKey } from '../domain/clock'
+import {
+  SETTLE_STATES,
+  canTransitionCommitment,
+  commitmentAtRisk,
+} from '../domain/commitment'
 import type { Commitment, CommitmentState, Desire, Goal, Task } from '../domain/types'
 
 export function DirectionPage() {
@@ -23,15 +28,18 @@ export function DirectionPage() {
   const goals = useLiveQuery(() => db.goals.toArray()) ?? []
   const commitments = useLiveQuery(() => db.commitments.toArray()) ?? []
   const date = todayKey()
-  const todayTasks =
-    useLiveQuery(() => db.tasks.where('plannedDate').equals(date).toArray(), [date]) ?? []
+  const allTasks = useLiveQuery(() => db.tasks.toArray()) ?? []
+  const todayTasks = allTasks.filter((task) => task.plannedDate === date)
 
   const activeGoals = goals.filter((goal) => goal.status === 'active')
-  const orphanGoals = activeGoals.filter(
+  const orphanGoals = goals.filter(
     (goal) => !desires.some((desire) => desire.id === goal.primaryDesireId),
   )
   const liveCommitments = commitments.filter(
     (item) => item.state === 'active' || item.state === 'draft',
+  )
+  const atRisk = commitments.filter((item) =>
+    commitmentAtRisk({ commitment: item, tasks: allTasks, today: date }),
   )
 
   let index = 0
@@ -41,14 +49,33 @@ export function DirectionPage() {
       <section className="min-w-0">
         <header className="rise">
           <Kicker>Direction</Kicker>
-          <h1 className="mt-3 font-display text-[3rem] leading-[0.95] tracking-tight sm:text-[3.5rem]">
+          <h1 className="mt-3 font-display text-[3rem] leading-[1.05] sm:text-[3.5rem]">
             方向
           </h1>
           <p className="mt-4 max-w-lg text-[15px] leading-7 text-mute">
             欲望说明你真正要什么；目标是朝它推进、能被检验的结果；承诺是清醒时签下的约束。
-            今日任务可以直接关联多个欲望；目标与承诺按需要再补充。
+            今日任务可以由你直接关联多个欲望；目标与承诺按需要补充。系统只提示承诺风险，结案由你亲自确认。
           </p>
         </header>
+
+        {atRisk.length > 0 ? (
+          <div
+            className="rise mt-8 border-y border-copper/35 py-4"
+            style={{ ['--i' as string]: 1 }}
+          >
+            <p className="font-mono text-[11px] tracking-[0.22em] text-copper">at-risk</p>
+            <p className="mt-2 text-[15px] leading-7 text-ink">
+              {atRisk.length} 条承诺已到期，且仍有未完成的 MUST。系统不会自动标违约，由你结案。
+            </p>
+            <ul className="mt-3 space-y-1">
+              {atRisk.map((item) => (
+                <li key={item.id} className="text-[14px] text-mute">
+                  {item.title}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         {loading ? null : desires.length === 0 ? (
           <div className="mt-10">
@@ -63,34 +90,39 @@ export function DirectionPage() {
           <Spine className="mt-12">
             {desires.map((desire) => {
               const nodeIndex = index++
-              const childGoals = activeGoals.filter((goal) => goal.primaryDesireId === desire.id)
+              const childGoals = goals.filter((goal) => goal.primaryDesireId === desire.id)
               return (
                 <SpineNode key={desire.id} tone="root" index={nodeIndex} className="not-first:mt-12">
                   <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-                    <h2 className="font-display text-[1.55rem] leading-tight tracking-tight text-ink">
+                    <h2 className="font-display text-[1.55rem] leading-tight text-ink">
                       {desire.title}
                     </h2>
                     <ImportanceDots value={desire.importance} size="sm" />
+                    {!desire.active ? <span className="text-xs text-mute">已停用</span> : null}
                   </div>
                   {desire.description ? (
                     <p className="mt-1.5 max-w-xl text-[14px] leading-6 text-mute">
                       {desire.description}
                     </p>
                   ) : null}
+                  <DesireEditor desire={desire} />
 
                   <Branch className="mt-5">
                     {childGoals.map((goal) => (
                       <GoalRow
                         key={goal.id}
                         goal={goal}
-                        commitments={liveCommitments.filter((item) => item.primaryGoalId === goal.id)}
+                        desires={desires}
+                        commitments={commitments.filter((item) => item.primaryGoalId === goal.id)}
                         todayTasks={todayTasks}
+                        allTasks={allTasks}
+                        today={date}
                       />
                     ))}
-                    <li className="relative">
+                    {desire.active ? <li className="relative">
                       <Tick />
                       <GoalForm desireId={desire.id} />
-                    </li>
+                    </li> : null}
                   </Branch>
                 </SpineNode>
               )
@@ -98,18 +130,21 @@ export function DirectionPage() {
 
             {orphanGoals.length > 0 ? (
               <SpineNode tone="branch" index={index++} className="mt-12">
-                <h2 className="font-display text-[1.3rem] leading-tight tracking-tight text-mute">
+                <h2 className="font-display text-[1.3rem] leading-tight text-mute">
                   未挂到欲望的目标
                 </h2>
                 <Branch className="mt-4">
-                  {orphanGoals.map((goal) => (
-                    <GoalRow
-                      key={goal.id}
-                      goal={goal}
-                      commitments={liveCommitments.filter((item) => item.primaryGoalId === goal.id)}
-                      todayTasks={todayTasks}
-                    />
-                  ))}
+                    {orphanGoals.map((goal) => (
+                      <GoalRow
+                        key={goal.id}
+                        goal={goal}
+                        desires={desires}
+                        commitments={commitments.filter((item) => item.primaryGoalId === goal.id)}
+                        todayTasks={todayTasks}
+                        allTasks={allTasks}
+                        today={date}
+                      />
+                    ))}
                 </Branch>
               </SpineNode>
             ) : null}
@@ -128,6 +163,7 @@ export function DirectionPage() {
             <Row label="欲望" value={desires.length} />
             <Row label="目标" value={activeGoals.length} />
             <Row label="承诺" value={liveCommitments.filter((item) => item.state === 'active').length} />
+            <Row label="风险中" value={atRisk.length} />
           </dl>
         </div>
         <div className="rise mt-10 border-l border-line pl-8" style={{ ['--i' as string]: 3 }}>
@@ -140,7 +176,7 @@ export function DirectionPage() {
               <span className="text-ink">目标</span>要能判断有没有做到。
             </li>
             <li>
-              <span className="text-ink">承诺</span>是给未来软弱的自己看的。写下当时的理由。
+              <span className="text-ink">承诺</span>写下有效期和最低要求。到期未完成只提示 at-risk，结案必须你点。
             </li>
           </ol>
           <Link
@@ -183,14 +219,62 @@ function Tick() {
   )
 }
 
+function DesireEditor({ desire }: { desire: Desire }) {
+  const [open, setOpen] = useState(false)
+  const [title, setTitle] = useState(desire.title)
+  const [description, setDescription] = useState(desire.description ?? '')
+  const [importance, setImportance] = useState(desire.importance)
+  const [active, setActive] = useState(desire.active)
+  const [error, setError] = useState('')
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    if (!title.trim()) return
+    try {
+      await db.desires.update(desire.id, {
+        title: title.trim(), description: description.trim() || undefined,
+        importance, active, updatedAt: new Date().toISOString(),
+      })
+      setOpen(false)
+      setError('')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '保存失败')
+    }
+  }
+
+  if (!open) return <Button variant="quiet" size="sm" className="mt-2" onClick={() => setOpen(true)}>编辑欲望</Button>
+  return (
+    <form onSubmit={(event) => void save(event)} className="mt-3 max-w-xl space-y-2 border-l border-line pl-4">
+      <Input required aria-label="欲望标题" value={title} onChange={(event) => setTitle(event.target.value)} />
+      <Textarea aria-label="欲望描述" rows={2} value={description} onChange={(event) => setDescription(event.target.value)} />
+      <ImportanceDots value={importance} onChange={setImportance} />
+      <label className="flex items-center gap-2 text-sm text-mute">
+        <input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} />
+        作为当前方向推荐
+      </label>
+      {error ? <p role="alert" className="text-sm text-copper">{error}</p> : null}
+      <div className="flex gap-2">
+        <Button type="button" variant="quiet" size="sm" onClick={() => setOpen(false)}>取消</Button>
+        <Button type="submit" variant="solid" size="sm">保存欲望</Button>
+      </div>
+    </form>
+  )
+}
+
 function GoalRow({
   goal,
+  desires,
   commitments,
   todayTasks,
+  allTasks,
+  today,
 }: {
   goal: Goal
+  desires: Desire[]
   commitments: Commitment[]
   todayTasks: Task[]
+  allTasks: Task[]
+  today: string
 }) {
   const linked = todayTasks.filter(
     (task) => task.primaryGoalId === goal.id && task.status !== 'cancelled',
@@ -201,12 +285,21 @@ function GoalRow({
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
         <p className="text-[16px] font-medium leading-7 text-ink">{goal.title}</p>
         <p className="font-mono text-[11px] text-faint tabular">
+          {goal.status !== 'active' ? `${goal.status} · ` : ''}
+          {goal.targetDate ? `${goal.targetDate} · ` : ''}
           {linked.length > 0 ? `今日 ${linked.length} 项` : '今日无动作'}
         </p>
       </div>
+      <GoalEditor goal={goal} desires={desires} />
       <ol className="mt-2 space-y-2 border-l border-line/70 pl-5">
         {commitments.map((item) => (
-          <CommitmentRow key={item.id} item={item} todayTasks={todayTasks} />
+          <CommitmentRow
+            key={item.id}
+            item={item}
+            todayTasks={todayTasks}
+            allTasks={allTasks}
+            today={today}
+          />
         ))}
         <li>
           <CommitmentForm goalId={goal.id} />
@@ -216,11 +309,63 @@ function GoalRow({
   )
 }
 
-function CommitmentRow({ item, todayTasks }: { item: Commitment; todayTasks: Task[] }) {
+function GoalEditor({ goal, desires }: { goal: Goal; desires: Desire[] }) {
+  const [open, setOpen] = useState(false)
+  const [title, setTitle] = useState(goal.title)
+  const [desireId, setDesireId] = useState(goal.primaryDesireId ?? '')
+  const [status, setStatus] = useState(goal.status)
+  const [targetDate, setTargetDate] = useState(goal.targetDate ?? '')
+  const [error, setError] = useState('')
+  if (!open) return <Button variant="quiet" size="sm" onClick={() => setOpen(true)}>调整目标</Button>
+  return (
+    <form className="mt-2 space-y-2" onSubmit={(event) => {
+      event.preventDefault()
+      if (!title.trim()) return
+      void db.goals.update(goal.id, {
+        title: title.trim(), primaryDesireId: desireId || undefined,
+        status, targetDate: targetDate || undefined,
+      }).then(() => { setOpen(false); setError('') })
+        .catch((cause) => setError(cause instanceof Error ? cause.message : '保存失败'))
+    }}>
+      <Input required aria-label="目标标题" value={title} onChange={(event) => setTitle(event.target.value)} />
+      <label className="block text-xs text-mute">关联欲望（可选）
+        <select value={desireId} onChange={(event) => setDesireId(event.target.value)} className="mt-1 block w-full rounded-md border border-line bg-paper px-2 py-2 text-ink">
+          <option value="">不关联欲望</option>
+          {desires.map((item) => <option key={item.id} value={item.id}>{item.title}{item.active ? '' : '（已停用）'}</option>)}
+        </select>
+      </label>
+      <label className="block text-xs text-mute">状态
+        <select value={status} onChange={(event) => setStatus(event.target.value as Goal['status'])} className="mt-1 block w-full rounded-md border border-line bg-paper px-2 py-2 text-ink">
+          <option value="active">进行中</option><option value="achieved">已达到</option><option value="dropped">已放弃</option>
+        </select>
+      </label>
+      <Input type="date" aria-label="检验日期" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} />
+      {error ? <p role="alert" className="text-sm text-copper">{error}</p> : null}
+      <div className="flex gap-2">
+        <Button type="button" variant="quiet" size="sm" onClick={() => setOpen(false)}>取消</Button>
+        <Button type="submit" variant="solid" size="sm">保存目标</Button>
+      </div>
+    </form>
+  )
+}
+
+function CommitmentRow({
+  item,
+  todayTasks,
+  allTasks,
+  today,
+}: {
+  item: Commitment
+  todayTasks: Task[]
+  allTasks: Task[]
+  today: string
+}) {
   const linked = todayTasks.filter(
     (task) => task.primaryCommitmentId === item.id && task.status !== 'cancelled',
   )
   const mins = linked.reduce((sum, task) => sum + task.plannedMinutes, 0)
+  const atRisk = commitmentAtRisk({ commitment: item, tasks: allTasks, today })
+  const endLabel = item.endAt ? item.endAt.slice(0, 10) : null
   return (
     <li className="group flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-0.5">
       <div className="min-w-0">
@@ -230,12 +375,18 @@ function CommitmentRow({ item, todayTasks }: { item: Commitment; todayTasks: Tas
         {item.rationale ? (
           <p className="text-[13px] leading-5 text-mute">「{item.rationale}」</p>
         ) : null}
+        {item.targetNote || endLabel ? (
+          <p className="font-mono text-[11px] leading-5 text-faint">
+            {endLabel ? `至 ${endLabel}` : ''}
+            {item.targetNote ? `${endLabel ? ' · ' : ''}${item.targetNote}` : ''}
+          </p>
+        ) : null}
       </div>
-      <div className="flex items-center gap-3 font-mono text-[11px] tabular">
+      <div className="flex flex-col items-end gap-1.5 font-mono text-[11px] tabular">
         <span className="text-faint">
           {linked.length > 0 ? `${linked.length} 项 · ${mins} min` : ''}
         </span>
-        <StateToggle id={item.id} state={item.state} />
+        <CommitmentStatus item={item} atRisk={atRisk} />
       </div>
     </li>
   )
@@ -336,6 +487,7 @@ function DesireForm({ autoOpen = false }: { autoOpen?: boolean }) {
 function GoalForm({ desireId }: { desireId: string }) {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
+  const [targetDate, setTargetDate] = useState('')
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -346,15 +498,17 @@ function GoalForm({ desireId }: { desireId: string }) {
       title: trimmed,
       status: 'active',
       primaryDesireId: desireId,
+      targetDate: targetDate || undefined,
       createdAt: new Date().toISOString(),
     })
     setTitle('')
+    setTargetDate('')
     setOpen(false)
   }
 
   return (
     <InlineAdd label="目标" open={open} onOpen={() => setOpen(true)}>
-      <form onSubmit={onSubmit} className="fade-in flex max-w-xl flex-col gap-2 sm:flex-row">
+      <form onSubmit={onSubmit} className="fade-in flex max-w-xl flex-col gap-2">
         <Input
           required
           autoFocus
@@ -362,7 +516,16 @@ function GoalForm({ desireId }: { desireId: string }) {
           onChange={(event) => setTitle(event.target.value)}
           placeholder="一个能被检验的结果，例如：交付可用的 LifeOS"
         />
-        <div className="flex shrink-0 gap-2">
+        <label className="block font-mono text-[11px] tracking-[0.18em] text-mute">
+          检验日期（可选）
+          <Input
+            type="date"
+            className="mt-1.5"
+            value={targetDate}
+            onChange={(event) => setTargetDate(event.target.value)}
+          />
+        </label>
+        <div className="flex shrink-0 justify-end gap-2">
           <Button type="button" variant="quiet" onClick={() => setOpen(false)}>
             取消
           </Button>
@@ -379,6 +542,8 @@ function CommitmentForm({ goalId }: { goalId: string }) {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
   const [rationale, setRationale] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [targetNote, setTargetNote] = useState('')
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -389,12 +554,16 @@ function CommitmentForm({ goalId }: { goalId: string }) {
       title: trimmed,
       rationale: rationale.trim() || undefined,
       startAt: new Date().toISOString(),
+      endAt: endDate ? new Date(`${endDate}T23:59:59`).toISOString() : undefined,
+      targetNote: targetNote.trim() || undefined,
       state: 'active',
       primaryGoalId: goalId,
       createdAt: new Date().toISOString(),
     })
     setTitle('')
     setRationale('')
+    setEndDate('')
+    setTargetNote('')
     setOpen(false)
   }
 
@@ -411,8 +580,22 @@ function CommitmentForm({ goalId }: { goalId: string }) {
         <Input
           value={rationale}
           onChange={(event) => setRationale(event.target.value)}
-          placeholder="当时为什么答应自己（可选）"
+          placeholder="当时为什么答应自己（Why）"
         />
+        <Input
+          value={targetNote}
+          onChange={(event) => setTargetNote(event.target.value)}
+          placeholder="最低要求，例如：至少 4 次、合计 360 分钟"
+        />
+        <label className="block font-mono text-[11px] tracking-[0.18em] text-mute">
+          有效期至（可选）
+          <Input
+            type="date"
+            className="mt-1.5"
+            value={endDate}
+            onChange={(event) => setEndDate(event.target.value)}
+          />
+        </label>
         <div className="flex justify-end gap-2">
           <Button type="button" variant="quiet" size="sm" onClick={() => setOpen(false)}>
             取消
@@ -426,28 +609,69 @@ function CommitmentForm({ goalId }: { goalId: string }) {
   )
 }
 
-function StateToggle({ id, state }: { id: string; state: CommitmentState }) {
-  const active = state === 'active'
-  const label = active ? '生效中' : state === 'draft' ? '草稿' : state
+function CommitmentStatus({ item, atRisk }: { item: Commitment; atRisk: boolean }) {
+  const [open, setOpen] = useState(false)
+  const settled = SETTLE_STATES.find((row) => row.id === item.state)
+  const active = item.state === 'active'
+  const label = active ? '生效中' : item.state === 'draft' ? '草稿' : item.state
+
+  async function go(to: CommitmentState) {
+    if (!canTransitionCommitment(item.state, to)) return
+    await db.commitments.update(item.id, { state: to })
+    setOpen(false)
+  }
+
+  if (settled) {
+    return (
+      <span className="inline-flex min-h-7 items-center rounded-full border border-line px-2.5 tracking-[0.14em] text-faint">
+        {settled.label}
+      </span>
+    )
+  }
+
   return (
-    <button
-      type="button"
-      title={active ? '点击改为草稿' : '点击激活'}
-      className={cx(
-        'inline-flex min-h-7 items-center gap-1.5 rounded-full border px-2.5 tracking-[0.14em] transition-colors duration-200',
-        active
-          ? 'border-copper/40 text-copper hover:bg-copper-soft'
-          : 'border-line text-faint hover:border-line-strong hover:text-mute',
-      )}
-      onClick={() => {
-        void db.commitments.update(id, { state: active ? 'draft' : 'active' })
-      }}
-    >
-      <span
-        aria-hidden
-        className={cx('size-1.5 rounded-full', active ? 'bg-copper' : 'bg-line-strong')}
-      />
-      {label}
-    </button>
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
+      {atRisk ? (
+        <span className="tracking-[0.16em] text-copper">at-risk</span>
+      ) : null}
+      <button
+        type="button"
+        title={active ? '点击改为草稿' : '点击激活'}
+        className={cx(
+          'inline-flex min-h-7 items-center gap-1.5 rounded-full border px-2.5 tracking-[0.14em] transition-colors duration-200',
+          active
+            ? 'border-copper/40 text-copper hover:bg-copper-soft'
+            : 'border-line text-faint hover:border-line-strong hover:text-mute',
+        )}
+        onClick={() => {
+          void go(active ? 'draft' : 'active')
+        }}
+      >
+        <span
+          aria-hidden
+          className={cx('size-1.5 rounded-full', active ? 'bg-copper' : 'bg-line-strong')}
+        />
+        {label}
+      </button>
+      {active ? (
+        open ? (
+          <div className="flex flex-wrap justify-end gap-1">
+            {SETTLE_STATES.map((row) => (
+              <Button key={row.id} type="button" variant="quiet" size="sm" onClick={() => void go(row.id)}>
+                {row.label}
+              </Button>
+            ))}
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="min-h-7 px-1 tracking-[0.14em] text-faint transition-colors hover:text-ink"
+            onClick={() => setOpen(true)}
+          >
+            结案
+          </button>
+        )
+      ) : null}
+    </div>
   )
 }

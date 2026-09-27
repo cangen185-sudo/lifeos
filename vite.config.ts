@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
@@ -5,11 +6,24 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
   base: process.env.BASE || '/',
+  server: {
+    watch: {
+      ignored: ['**/.playwright-cli/**', '**/output/playwright/**'],
+    },
+  },
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+  },
   plugins: [
     react(),
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      workbox: {
+        maximumFileSizeToCacheInBytes: 3_000_000,
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,webmanifest}'],
+      },
       includeAssets: ['favicon.svg', 'icon.svg'],
       manifest: {
         name: 'LifeOS',

@@ -15,7 +15,7 @@ export function PlaceholderPage({ kicker, title, lede, note }: PlaceholderPagePr
       <section className="min-w-0">
         <header className="rise">
           <Kicker>{kicker}</Kicker>
-          <h1 className="mt-3 font-display text-[3rem] leading-[0.95] tracking-tight sm:text-[3.5rem]">
+          <h1 className="mt-3 font-display text-[3rem] leading-[1.05] sm:text-[3.5rem]">
             {title}
           </h1>
           <p className="mt-4 max-w-lg text-[15px] leading-7 text-mute">{lede}</p>

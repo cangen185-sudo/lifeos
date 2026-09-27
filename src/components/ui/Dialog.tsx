@@ -84,7 +84,7 @@ export function Dialog({
                 {kicker}
               </p>
             ) : null}
-            <h2 className="mt-1 font-display text-[1.6rem] leading-tight tracking-tight">
+            <h2 className="mt-1 font-display text-[1.6rem] leading-tight">
               {title}
             </h2>
           </div>

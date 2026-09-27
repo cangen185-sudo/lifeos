@@ -1,5 +1,7 @@
 # LifeOS / Personal Execution System — V0.1 最终产品设计文档
 
+> 2026-09-27 本地闭环修订：本文件保留早期构想供追溯。当前实现与验收以 `docs/V0.1-decisions.md` 和本轮本地交接要求为准：Goal、Commitment 可选；明确的多对多仅为 Task ↔ Desire，Goal 仍只有一个 `primaryDesireId`；本期没有 Project、任务依赖、账号、云端或应用关闭后的推送。Analytics 不汇总欲望行，实际总时长按唯一闭合 WorkSession 计算。以下旧章节提到 Goal ↔ Desire 多对多、Project、自动判断承诺违约或云端路线时，均不代表本期已实现。
+
 **版本**：V0.1 Product Freeze  
 **日期**：2026-09-13  
 **定位**：个人使用的长期意志 → 今日执行 → 偏差干预 → 复盘分析系统  

@@ -1,9 +1,10 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { Check, Play, Plus, Square } from 'lucide-react'
+import { Check, Play, Plus, Square, SlidersHorizontal } from 'lucide-react'
 import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
   type FormEvent,
@@ -12,22 +13,44 @@ import { Link } from 'react-router-dom'
 import { Chain } from '../components/ui/Chain'
 import { Dialog } from '../components/ui/Dialog'
 import { Meter } from '../components/ui/Meter'
-import { Button, Input, Kicker, Segmented, cx } from '../components/ui/primitives'
+import { Button, Input, Kicker, Segmented, Textarea, cx } from '../components/ui/primitives'
 import { Spine, SpineNode } from '../components/ui/Spine'
-import { finishTask, startTask } from '../application/taskCommands'
+import {
+  changeTaskDesireLinks,
+  createTask,
+  editTaskBeforeConfirmation,
+  finishTask,
+  removeTaskBeforeConfirmation,
+  startTask,
+} from '../application/taskCommands'
+import { ExitDialog } from '../components/ExitDialog'
+import { InterventionBanner } from '../components/InterventionBanner'
+import { TaskEditDialog } from '../components/TaskEditDialog'
 import { db, ensureDailyPlan, newId } from '../db/db'
 import {
-  importanceScore,
-  whyPathFor,
-} from '../domain/alignment'
-import { todayKey } from '../domain/clock'
+  confirmDailyPlan,
+  recordIntervention,
+  settleMust,
+  splitMust,
+  updateDailyCapacity,
+} from '../db/review'
+import { importanceScore, whyPathFor } from '../domain/alignment'
+import { canConfirmPlan } from '../domain/capacity'
+import { commitmentAtRisk } from '../domain/commitment'
+import { shiftDate, todayKey } from '../domain/clock'
 import { desiresForTask } from '../domain/desireLinks'
-import type { Commitment, Desire, Goal, PriorityBand, Task } from '../domain/types'
+import { pickForegroundIntervention } from '../domain/intervention'
+import type { Intervention } from '../domain/intervention'
+import { isOpenStatus } from '../domain/review'
+import type { Commitment, Desire, Goal, InterventionEvent, PriorityBand, Task, WorkSession } from '../domain/types'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 
 const EMPTY_DESIRES: Desire[] = []
 const EMPTY_GOALS: Goal[] = []
 const EMPTY_COMMITMENTS: Commitment[] = []
+const EMPTY_TASKS: Task[] = []
+const EMPTY_SESSIONS: WorkSession[] = []
+const EMPTY_INTERVENTIONS: InterventionEvent[] = []
 
 const BANDS: { id: PriorityBand; label: string; hint: string }[] = [
   { id: 'must', label: 'MUST', hint: '今天不能悄悄消失' },
@@ -52,15 +75,17 @@ const MONTHS = [
 ]
 
 export function TodayPage() {
-  const date = todayKey()
-  const now = new Date()
+  const [now, setNow] = useState(() => new Date())
+  const date = todayKey(now)
   const isDesktop = useMediaQuery('(min-width: 1024px)')
 
   const [title, setTitle] = useState('')
   const [minutes, setMinutes] = useState(90)
   const [band, setBand] = useState<PriorityBand>('must')
   const [plannedStart, setPlannedStart] = useState('')
-  const [capacityDraft, setCapacityDraft] = useState(240)
+  const [plannedDate, setPlannedDate] = useState(date)
+  const [amendmentReason, setAmendmentReason] = useState('')
+  const [capacityInput, setCapacityInput] = useState<{ date: string; value: number } | null>(null)
   const [completeTask, setCompleteTask] = useState<Task | null>(null)
   const [manualMinutes, setManualMinutes] = useState(0)
   const [goalId, setGoalId] = useState('')
@@ -71,28 +96,43 @@ export function TodayPage() {
   const [composerOpen, setComposerOpen] = useState(false)
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null)
   const [taskError, setTaskError] = useState<string | null>(null)
+  const [exitTask, setExitTask] = useState<Task | null>(null)
+  const [editingTask, setEditingTask] = useState<Task | null>(null)
+  const [overloadReason, setOverloadReason] = useState('')
+  const [held, setHeld] = useState<{ date: string; item: Intervention } | null>(null)
+  const [focusTick, setFocusTick] = useState(0)
+  const addingRef = useRef(false)
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 30_000)
+    return () => window.clearInterval(id)
+  }, [])
 
   const plan = useLiveQuery(() => db.dailyPlans.get(date), [date])
+  const capacityDraft = capacityInput?.date === date ? capacityInput.value : (plan?.capacityMinutes ?? 240)
+  const setCapacityDraft = (value: number) => setCapacityInput({ date, value })
+  const heldIntervention = held?.date === date ? held.item : null
   const tasks = useLiveQuery(
     () => db.tasks.where('plannedDate').equals(date).toArray(),
     [date],
   )
-  const sessions = useLiveQuery(() => db.workSessions.toArray(), [])
+  const sessions = useLiveQuery(() => db.workSessions.toArray(), []) ?? EMPTY_SESSIONS
   const desires = useLiveQuery(() => db.desires.toArray(), []) ?? EMPTY_DESIRES
   const goals = useLiveQuery(() => db.goals.toArray(), []) ?? EMPTY_GOALS
   const commitments = useLiveQuery(() => db.commitments.toArray(), []) ?? EMPTY_COMMITMENTS
+  const allTasks = useLiveQuery(() => db.tasks.toArray(), []) ?? EMPTY_TASKS
+  const interventionLog = useLiveQuery(
+    () => db.interventionEvents.where('date').equals(date).toArray(),
+    [date],
+  ) ?? EMPTY_INTERVENTIONS
 
   useEffect(() => {
     void ensureDailyPlan(date)
   }, [date])
 
-  useEffect(() => {
-    if (plan) setCapacityDraft(plan.capacityMinutes)
-  }, [plan])
-
   const openSessions = useMemo(() => {
     const map = new Map<string, string>()
-    for (const session of sessions ?? []) {
+    for (const session of sessions) {
       if (!session.endedAt) map.set(session.taskId, session.id)
     }
     return map
@@ -138,24 +178,92 @@ export function TodayPage() {
   const remaining = Math.min(capacityDraft - plannedMust, minutesToMidnight)
   const runningTask = visibleTasks.find((task) => task.status === 'in_progress')
   const alignedCount = visibleTasks.filter((task) => desiresForTask(task, goals, desires).length > 0).length
+  const overdueOpen = allTasks.filter(
+    (task) =>
+      Boolean(task.plannedDate) &&
+      task.plannedDate! < date &&
+      task.priorityBand === 'must' &&
+      isOpenStatus(task.status),
+  )
+  const upcoming = allTasks.filter((task) =>
+    Boolean(task.plannedDate) && task.plannedDate! > date && isOpenStatus(task.status))
+    .sort((a, b) => (a.plannedDate ?? '').localeCompare(b.plannedDate ?? ''))
+  const targetDate = plannedDate < date ? date : plannedDate
+  const locked = Boolean(plan?.lockedAt)
+  const confirmCheck = canConfirmPlan(plannedMust, capacityDraft, overloadReason)
+
+  useEffect(() => {
+    function onVis() {
+      if (document.visibilityState === 'visible') setFocusTick((value) => value + 1)
+    }
+    document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('focus', onVis)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('focus', onVis)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (heldIntervention) return
+    const picked = pickForegroundIntervention({
+      date,
+      now: new Date(),
+      overdueOpen: overdueOpen.length,
+      plannedMust,
+      capacityMinutes: capacityDraft,
+      tasks: allTasks,
+      sessions,
+      commitments,
+      goals,
+      desires,
+      shown: interventionLog.map((item) => ({
+        date: item.date,
+        kind: item.kind,
+        taskId: item.taskId,
+      })),
+    })
+    if (!picked) return
+    void recordIntervention({ date, kind: picked.kind, taskId: picked.taskId })
+      .then(() => setHeld({ date, item: picked }))
+      .catch(() => setTaskError('提示记录失败，请稍后重试'))
+  }, [
+    focusTick,
+    date,
+    heldIntervention,
+    overdueOpen.length,
+    plannedMust,
+    capacityDraft,
+    allTasks,
+    sessions,
+    commitments,
+    goals,
+    desires,
+    interventionLog,
+  ])
 
   async function saveCapacity() {
-    await db.dailyPlans.put({
-      date,
-      capacityMinutes: capacityDraft,
-      confirmedAt: plan?.confirmedAt,
-      lockedAt: plan?.lockedAt,
-      overloadOverrideReason: plan?.overloadOverrideReason,
-    })
+    try {
+      await updateDailyCapacity(date, capacityDraft)
+      setTaskError(null)
+    } catch (cause) {
+      setCapacityInput(null)
+      setTaskError(cause instanceof Error ? cause.message : '保存容量失败')
+    }
   }
 
   async function addTask() {
     const trimmed = title.trim()
-    if (!trimmed) return
+    if (!trimmed || addingRef.current) return
+    if (!Number.isFinite(minutes) || minutes < 1) {
+      setTaskError('计划分钟数必须是正数。')
+      return
+    }
+    addingRef.current = true
     const task: Task = {
       id: newId(),
       title: trimmed,
-      plannedDate: date,
+      plannedDate: targetDate,
       plannedStart: plannedStart || undefined,
       priorityBand: band,
       plannedMinutes: minutes,
@@ -165,19 +273,27 @@ export function TodayPage() {
       desireIds,
       createdAt: new Date().toISOString(),
     }
-    await db.tasks.add(task)
-    setTitle('')
-    setPlannedStart('')
-    setDesireIds([])
-    setGoalId('')
-    setCommitmentId('')
-    setComposerOpen(false)
+    try {
+      await createTask(task, amendmentReason)
+      setTitle('')
+      setPlannedStart('')
+      setAmendmentReason('')
+      setDesireIds([])
+      setGoalId('')
+      setCommitmentId('')
+      setComposerOpen(false)
+      setTaskError(null)
+    } catch (error) {
+      setTaskError(error instanceof Error ? error.message : '创建任务失败，请重试')
+    } finally {
+      addingRef.current = false
+    }
   }
 
   async function saveDesireLinks() {
     if (!editingDesires) return
     try {
-      await db.tasks.update(editingDesires.id, { desireIds: editingDesireIds })
+      await changeTaskDesireLinks(editingDesires.id, editingDesireIds)
       setEditingDesires(null)
       setTaskError(null)
     } catch (error) {
@@ -208,8 +324,24 @@ export function TodayPage() {
     setCompleteTask(task)
   }
 
+  async function onConfirmPlan() {
+    if (addingRef.current) return
+    addingRef.current = true
+    try {
+      await confirmDailyPlan({
+        date,
+        capacityMinutes: capacityDraft,
+        overloadReason,
+      })
+      setOverloadReason('')
+    } finally {
+      addingRef.current = false
+    }
+  }
+
   const closeComplete = useCallback(() => setCompleteTask(null), [])
   const closeComposer = useCallback(() => setComposerOpen(false), [])
+  const closeExit = useCallback(() => setExitTask(null), [])
 
   const day = Number(date.slice(8, 10))
   const month = Number(date.slice(5, 7))
@@ -220,6 +352,10 @@ export function TodayPage() {
       minutes={minutes}
       band={band}
       plannedStart={plannedStart}
+      plannedDate={targetDate}
+      minDate={date}
+      amendmentRequired={targetDate === date && locked && band === 'must'}
+      amendmentReason={amendmentReason}
       goalId={goalId}
       goals={goals}
       desires={desires}
@@ -230,6 +366,8 @@ export function TodayPage() {
       onMinutes={setMinutes}
       onBand={setBand}
       onPlannedStart={setPlannedStart}
+      onPlannedDate={setPlannedDate}
+      onAmendmentReason={setAmendmentReason}
       onGoal={(value) => {
         setGoalId(value)
         const goal = goals.find((item) => item.id === value)
@@ -258,11 +396,11 @@ export function TodayPage() {
             {date} · {WEEKDAYS[now.getDay()]}
           </Kicker>
           <div className="mt-3 flex items-end gap-5">
-            <h1 className="font-display text-[5.75rem] leading-[0.82] tracking-[-0.035em] text-ink tabular sm:text-[6.5rem]">
+            <h1 className="font-display text-[5.75rem] leading-[0.92] text-ink tabular sm:text-[6.5rem]">
               {day}
             </h1>
             <div className="pb-1">
-              <p className="font-display text-[1.6rem] leading-none tracking-tight">
+              <p className="font-display text-[1.6rem] leading-none">
                 {MONTHS[month - 1]}
               </p>
               <p className="mt-2 text-[13px] leading-5 text-mute">
@@ -274,6 +412,58 @@ export function TodayPage() {
           </div>
         </header>
 
+        {heldIntervention ? (
+          <InterventionBanner
+            item={heldIntervention}
+            onDismiss={() => setHeld(null)}
+            onAdjust={
+              heldIntervention.taskId
+                ? () => {
+                    const target = visibleTasks.find((item) => item.id === heldIntervention.taskId)
+                    if (target) setExitTask(target)
+                  }
+                : undefined
+            }
+          />
+        ) : null}
+
+        {overdueOpen.length > 0 ? (
+          <div
+            className="rise mt-8 flex flex-wrap items-baseline justify-between gap-3 border-y border-copper/35 py-4"
+            style={{ ['--i' as string]: 1 }}
+          >
+            <div className="w-full">
+              <p className="text-[15px] leading-7 text-ink">
+                过去日期还有 <span className="font-mono text-copper">{overdueOpen.length}</span> 件 MUST 未结案。
+              </p>
+              <ul className="mt-3 space-y-2">
+                {overdueOpen.sort((a, b) => (a.plannedDate ?? '').localeCompare(b.plannedDate ?? '')).map((task) => (
+                  <li key={task.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <span>{task.plannedDate} · {task.title} · {task.status === 'in_progress' ? '进行中' : '待处理'}</span>
+                    <Link to={`/review?date=${task.plannedDate}`} className="text-copper hover:underline">
+                      说明原因和去向 →
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        ) : null}
+
+        {upcoming.length > 0 ? (
+          <section className="rise mt-8 border-y border-line py-4">
+            <Kicker>下一次行动</Kicker>
+            <ul className="mt-3 space-y-2">
+              {upcoming.map((task) => (
+                <li key={task.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <span>{task.plannedDate} · {task.title} · {task.priorityBand.toUpperCase()} · 待办</span>
+                  <Button variant="quiet" size="sm" onClick={() => setEditingTask(task)}>编辑</Button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
         {/* Compact capacity strip: phone & tablet */}
         <div className="rise mt-8 border-y border-line py-4 lg:hidden" style={{ ['--i' as string]: 1 }}>
           <div className="flex items-baseline justify-between gap-4">
@@ -281,6 +471,7 @@ export function TodayPage() {
               value={capacityDraft}
               onChange={setCapacityDraft}
               onCommit={() => void saveCapacity()}
+              disabled={locked}
             />
             <p className="font-mono text-[12px] text-mute tabular">
               MUST 已占 <span className="text-ink">{plannedMust}</span>
@@ -292,6 +483,28 @@ export function TodayPage() {
             </p>
           </div>
           <Meter value={plannedMust} max={capacityDraft} label="MUST 占用今日容量" thin className="mt-3" />
+          {locked ? (
+            <p className="mt-2 font-mono text-[11px] tracking-[0.18em] text-moss">今日计划已确认</p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {confirmCheck.needsReason ? (
+                <Textarea
+                  rows={2}
+                  placeholder="MUST 超出容量。写下为什么仍然确认。"
+                  value={overloadReason}
+                  onChange={(event) => setOverloadReason(event.target.value)}
+                />
+              ) : null}
+              <Button
+                variant="solid"
+                size="sm"
+                disabled={!confirmCheck.ok || mustTasks.length === 0}
+                onClick={() => void onConfirmPlan()}
+              >
+                确认今日计划
+              </Button>
+            </div>
+          )}
         </div>
 
         <Spine className="mt-10 lg:mt-14">
@@ -317,7 +530,9 @@ export function TodayPage() {
                       </span>
                     ) : null}
                   </h2>
-                  <p className="text-[12px] text-faint">{item.hint}</p>
+                  <p className="text-[12px] text-faint">
+                    {item.id === 'must' && locked ? '已锁定，调整必须留下原因' : item.hint}
+                  </p>
                 </div>
                 {list.length === 0 ? (
                   <ol className="mt-3">
@@ -338,7 +553,7 @@ export function TodayPage() {
                           index={nodeIndex++}
                           task={task}
                           why={whyPathFor(goal, desire, commitment)}
-                          linkedDesires={desiresForTask(task, goals, desires)}
+                          linkedDesires={desiresForTask(task, goals, desires, true)}
                           importance={rankTask(task)}
                           sessionStartedAt={
                             openSessions.has(task.id)
@@ -354,6 +569,8 @@ export function TodayPage() {
                             setEditingDesires(task)
                             setEditingDesireIds(task.desireIds ?? [])
                           }}
+                          onAdjust={() => locked ? setExitTask(task) : setEditingTask(task)}
+                          adjustLabel={locked ? '调整' : '编辑'}
                         />
                       )
                     })}
@@ -364,7 +581,7 @@ export function TodayPage() {
           })}
         </Spine>
 
-        {isDesktop ? <div className="sticky bottom-6 mt-14">{composer}</div> : null}
+        {isDesktop ? <div className="mt-14">{composer}</div> : null}
       </section>
 
       <aside className="hidden lg:block lg:sticky lg:top-12 lg:self-start">
@@ -376,6 +593,7 @@ export function TodayPage() {
               onChange={setCapacityDraft}
               onCommit={() => void saveCapacity()}
               large
+              disabled={locked}
             />
             <p className="pb-1 text-right font-mono text-[12px] leading-5 text-mute tabular">
               MUST 已占
@@ -397,12 +615,39 @@ export function TodayPage() {
               </>
             )}
           </p>
+          {locked ? (
+            <p className="mt-3 font-mono text-[11px] tracking-[0.18em] text-moss">今日计划已确认</p>
+          ) : (
+            <div className="mt-4 space-y-2">
+              {confirmCheck.needsReason ? (
+                <Textarea
+                  rows={2}
+                  placeholder="MUST 超出容量。写下为什么仍然确认。"
+                  value={overloadReason}
+                  onChange={(event) => setOverloadReason(event.target.value)}
+                />
+              ) : null}
+              <Button
+                variant="solid"
+                size="sm"
+                disabled={!confirmCheck.ok || mustTasks.length === 0}
+                onClick={() => void onConfirmPlan()}
+              >
+                确认今日计划
+              </Button>
+            </div>
+          )}
         </div>
 
         <div className="rise mt-10 border-l border-line pl-8" style={{ ['--i' as string]: 3 }}>
           <Kicker>此刻</Kicker>
           <p className="mt-3 text-[15px] leading-7 text-ink">
-            {runningTask ? (
+            {overdueOpen.length > 0 ? (
+              <>
+                过去日期还有 {overdueOpen.length} 件 MUST 没关账。
+                <span className="text-mute">先把原因记下，再开始今天。</span>
+              </>
+            ) : runningTask ? (
               <>
                 正在做「{runningTask.title}」。
                 <span className="text-mute">做完再看别的。</span>
@@ -459,6 +704,13 @@ export function TodayPage() {
                       <p className="text-[14px] leading-6 text-ink">{item.title}</p>
                       <p className="font-mono text-[11px] text-mute tabular">
                         {linked.length > 0 ? `今日 ${linked.length} 项 · ${mins} min` : '今日无动作'}
+                        {commitmentAtRisk({
+                          commitment: item,
+                          tasks: allTasks,
+                          today: date,
+                        })
+                          ? ' · at-risk'
+                          : ''}
                       </p>
                     </li>
                   )
@@ -489,6 +741,40 @@ export function TodayPage() {
           </Dialog>
         </>
       ) : null}
+
+      <ExitDialog
+        key={exitTask?.id ?? 'exit'}
+        task={exitTask}
+        date={date}
+        splitTargetDate={shiftDate(date, 1)}
+        narrowTargetDate={date}
+        open={exitTask !== null}
+        onClose={closeExit}
+        onSettle={async (input) => {
+          if (!exitTask) return
+          await settleMust({
+            task: exitTask,
+            date,
+            action: input.action,
+            reasonCode: input.reasonCode,
+            nextDate: input.nextDate,
+            narrowTitle: input.narrowTitle,
+            narrowMinutes: input.narrowMinutes,
+          })
+        }}
+        onSplit={async ({ parts, reasonCode }) => {
+          if (!exitTask) return
+          await splitMust({ task: exitTask, date, parts, reasonCode, targetDate: shiftDate(date, 1) })
+        }}
+      />
+
+      <TaskEditDialog
+        key={editingTask?.id ?? 'task-edit'}
+        task={editingTask}
+        onClose={() => setEditingTask(null)}
+        onSave={(value) => editTaskBeforeConfirmation({ taskId: editingTask!.id, ...value })}
+        onRemove={() => removeTaskBeforeConfirmation(editingTask!.id)}
+      />
 
       <Dialog
         open={completeTask !== null}
@@ -577,11 +863,13 @@ function CapacityInput({
   onChange,
   onCommit,
   large = false,
+  disabled = false,
 }: {
   value: number
   onChange: (value: number) => void
   onCommit: () => void
   large?: boolean
+  disabled?: boolean
 }) {
   return (
     <label className="inline-flex items-baseline gap-2">
@@ -595,6 +883,7 @@ function CapacityInput({
           large ? 'text-[2.6rem] leading-none' : 'text-[1.5rem] leading-none',
         )}
         value={value}
+        disabled={disabled}
         onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(Number(event.target.value))}
         onBlur={onCommit}
         onKeyDown={(event) => {
@@ -611,6 +900,10 @@ function Composer({
   minutes,
   band,
   plannedStart,
+  plannedDate,
+  minDate,
+  amendmentRequired,
+  amendmentReason,
   goalId,
   goals,
   desires,
@@ -621,6 +914,8 @@ function Composer({
   onMinutes,
   onBand,
   onPlannedStart,
+  onPlannedDate,
+  onAmendmentReason,
   onGoal,
   onSubmit,
   floating,
@@ -629,6 +924,10 @@ function Composer({
   minutes: number
   band: PriorityBand
   plannedStart: string
+  plannedDate: string
+  minDate: string
+  amendmentRequired: boolean
+  amendmentReason: string
   goalId: string
   goals: Goal[]
   desires: Desire[]
@@ -639,6 +938,8 @@ function Composer({
   onMinutes: (value: number) => void
   onBand: (value: PriorityBand) => void
   onPlannedStart: (value: string) => void
+  onPlannedDate: (value: string) => void
+  onAmendmentReason: (value: string) => void
   onGoal: (value: string) => void
   onSubmit: () => void
   floating: boolean
@@ -679,6 +980,27 @@ function Composer({
         ) : (
           <Link to="/direction" className="mt-2 inline-block text-xs text-copper">先去方向页写下你的欲望 →</Link>
         )}
+      </div>
+
+      <div className={cx('border-t border-white/10 py-3', floating && 'px-6')}>
+        <label className="block font-mono text-[10px] tracking-[0.18em] text-paper/45">
+          安排日期
+          <input
+            required type="date" min={minDate} value={plannedDate}
+            className="mt-1.5 block border-b border-white/15 bg-transparent py-2 text-sm text-paper"
+            onChange={(event) => onPlannedDate(event.target.value)}
+          />
+        </label>
+        {amendmentRequired ? (
+          <label className="mt-3 block text-xs text-paper/70">
+            确认计划后新增 MUST 的原因
+            <Textarea
+              required rows={2} className="mt-1 text-ink" value={amendmentReason}
+              onChange={(event) => onAmendmentReason(event.target.value)}
+              placeholder="例如：今天临时出现了必须优先处理的事项"
+            />
+          </label>
+        ) : null}
       </div>
 
       <div
@@ -778,7 +1100,7 @@ function DesireChoices({ desires, selected, onChange, dark = false }: {
 }) {
   return (
     <div className="mt-2 flex flex-wrap gap-2">
-      {desires.filter((desire) => desire.active).map((desire) => (
+      {desires.filter((desire) => desire.active || selected.includes(desire.id)).map((desire) => (
         <label key={desire.id} className={cx(
           'inline-flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs',
           dark ? 'border-white/20 text-paper' : 'border-line text-ink',
@@ -790,7 +1112,7 @@ function DesireChoices({ desires, selected, onChange, dark = false }: {
               ? [...selected, desire.id]
               : selected.filter((id) => id !== desire.id))}
           />
-          {desire.title}
+          {desire.title}{desire.active ? '' : '（已停用）'}
         </label>
       ))}
     </div>
@@ -807,6 +1129,8 @@ function TaskNode({
   onComplete,
   onEditDesires,
   busy,
+  onAdjust,
+  adjustLabel,
   index,
 }: {
   task: Task
@@ -818,6 +1142,8 @@ function TaskNode({
   onComplete: () => void
   onEditDesires: () => void
   busy: boolean
+  onAdjust: () => void
+  adjustLabel: string
   index: number
 }) {
   const running = task.status === 'in_progress'
@@ -857,7 +1183,7 @@ function TaskNode({
           {why.length > 0 ? <Chain path={why} className="mt-1.5" /> : null}
           <p className="mt-1 text-[12px] leading-5 text-mute">
             {linkedDesires.length > 0
-              ? `关联欲望：${linkedDesires.map((desire) => desire.title).join(' · ')}`
+              ? `关联欲望：${linkedDesires.map((desire) => desire.active ? desire.title : `${desire.title}（已停用）`).join(' · ')}`
               : '尚未关联欲望'}
             {' · '}
             <button type="button" className="text-copper underline-offset-2 hover:underline" onClick={onEditDesires}>
@@ -881,6 +1207,10 @@ function TaskNode({
               )}
               完成
             </Button>
+            <Button variant="quiet" size="sm" onClick={onAdjust}>
+              <SlidersHorizontal className="size-3.5" aria-hidden />
+              {adjustLabel}
+            </Button>
           </div>
         ) : null}
       </div>
@@ -889,7 +1219,7 @@ function TaskNode({
 }
 
 function Elapsed({ startedAt }: { startedAt: string }) {
-  const [now, setNow] = useState(Date.now())
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(id)

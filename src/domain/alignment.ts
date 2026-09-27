@@ -91,7 +91,7 @@ export function suggestAlignment(
     }
   }
 
-  if (best.score < 0.18) {
+  if (best.score < 0.12) {
     return { score: best.score, whyPath: [] }
   }
   return best

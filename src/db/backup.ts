@@ -3,18 +3,29 @@ import { parseBackup } from './backupSchema'
 import type { BackupPayload } from '../domain/types'
 
 export async function exportBackup(): Promise<BackupPayload> {
-  const [dailyPlans, tasks, workSessions, taskEvents, desires, goals, commitments] =
-    await db.transaction('r', db.tables, () => Promise.all([
-      db.dailyPlans.toArray(),
-      db.tasks.toArray(),
-      db.workSessions.toArray(),
-      db.taskEvents.toArray(),
-      db.desires.toArray(),
-      db.goals.toArray(),
-      db.commitments.toArray(),
-    ]))
+  const [
+    dailyPlans,
+    tasks,
+    workSessions,
+    taskEvents,
+    desires,
+    goals,
+    commitments,
+    dailyReviews,
+    interventionEvents,
+  ] = await db.transaction('r', db.tables, () => Promise.all([
+    db.dailyPlans.toArray(),
+    db.tasks.toArray(),
+    db.workSessions.toArray(),
+    db.taskEvents.toArray(),
+    db.desires.toArray(),
+    db.goals.toArray(),
+    db.commitments.toArray(),
+    db.dailyReviews.toArray(),
+    db.interventionEvents.toArray(),
+  ]))
   return {
-    version: 2,
+    version: 5,
     exportedAt: new Date().toISOString(),
     dailyPlans,
     tasks,
@@ -23,6 +34,8 @@ export async function exportBackup(): Promise<BackupPayload> {
     desires,
     goals,
     commitments,
+    dailyReviews,
+    interventionEvents,
   }
 }
 
@@ -50,6 +63,8 @@ export async function importBackup(text: string): Promise<void> {
         db.desires.bulkAdd(parsed.desires ?? []),
         db.goals.bulkAdd(parsed.goals ?? []),
         db.commitments.bulkAdd(parsed.commitments ?? []),
+        db.dailyReviews.bulkAdd(parsed.dailyReviews ?? []),
+        db.interventionEvents.bulkAdd(parsed.interventionEvents ?? []),
       ])
   })
 }

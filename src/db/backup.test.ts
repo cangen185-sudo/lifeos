@@ -64,7 +64,13 @@ describe('backup safety', () => {
     expect(await db.tasks.count()).toBe(0)
     await importBackup(text)
     const exported = await exportBackup()
-    expect(exported).toEqual({ ...data, exportedAt: exported.exportedAt })
+    expect(exported).toEqual({
+      ...data,
+      version: 5,
+      exportedAt: exported.exportedAt,
+      dailyReviews: [],
+      interventionEvents: [],
+    })
     expect(parseBackup(JSON.stringify(exported))).toEqual(exported)
   })
 
@@ -74,5 +80,38 @@ describe('backup safety', () => {
     await expect(importBackup(JSON.stringify(payload()))).rejects.toThrow('write failed')
     expect((await db.tasks.toArray()).map((row) => row.id)).toEqual(['original'])
     expect(await db.dailyPlans.count()).toBe(0)
+  })
+
+  it.each([3, 4] as const)('imports version %i reviews and exports one final result per task', async (version) => {
+    const data: BackupPayload = {
+      ...payload(), version,
+      dailyReviews: [{
+        date: '2026-09-26',
+        entries: [
+          { taskId: 'restored', title: 'restored', action: 'defer', reasonCode: 'plan_error', createdAt: stamp },
+          { taskId: 'restored', title: 'restored', action: 'cancel', reasonCode: 'priority_change', createdAt: stamp },
+        ],
+      }],
+      ...(version === 4 ? { interventionEvents: [] } : {}),
+    }
+    await importBackup(JSON.stringify(data))
+    const exported = await exportBackup()
+    expect(exported.dailyReviews?.[0].entries).toHaveLength(1)
+    expect(exported.dailyReviews?.[0].entries[0].reasonCode).toBe('priority_change')
+    expect(exported.dailyReviews?.[0].history).toHaveLength(2)
+    expect(parseBackup(JSON.stringify(exported)).dailyReviews?.[0].entries).toHaveLength(1)
+  })
+
+  it('rejects a damaged V5 review reference without replacing local data', async () => {
+    await db.tasks.add(task('original'))
+    const data: BackupPayload = {
+      ...payload(), version: 5, dailyReviews: [{
+        date: '2026-09-26', entries: [
+          { taskId: 'missing', title: 'missing', action: 'cancel', reasonCode: 'plan_error', createdAt: stamp },
+        ],
+      }], interventionEvents: [],
+    }
+    await expect(importBackup(JSON.stringify(data))).rejects.toThrow('taskId 不存在')
+    expect((await db.tasks.toArray()).map((row) => row.id)).toEqual(['original'])
   })
 })

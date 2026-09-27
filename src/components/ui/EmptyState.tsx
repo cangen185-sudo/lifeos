@@ -21,7 +21,7 @@ export function EmptyState({
         ∅
       </span>
       <Kicker tone="copper">{kicker}</Kicker>
-      <h2 className="mt-3 max-w-md font-display text-[2rem] leading-[1.15] tracking-tight">
+      <h2 className="mt-3 max-w-md font-display text-[2rem] leading-[1.2]">
         {title}
       </h2>
       <p className="mt-4 max-w-md text-[15px] leading-7 text-mute">{body}</p>

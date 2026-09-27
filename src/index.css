@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+html {
+  scroll-padding-bottom: 7rem;
+}
+
 @theme {
   --color-bone: #ece9e2;
   --color-paper: #f7f5f0;
@@ -15,8 +19,8 @@
   --color-moss-soft: #dce5df;
   --color-night: #1b1a18;
 
-  --font-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --font-display: "Fraunces", "Noto Serif SC", "Songti SC", serif;
+  --font-sans: "Ma Shan Zheng", "Kaiti SC", "STKaiti", "KaiTi", cursive;
+  --font-display: "Zhi Mang Xing", "Ma Shan Zheng", "Kaiti SC", "STKaiti", cursive;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
 
   --radius-sm: 6px;
@@ -56,9 +60,9 @@
     background-attachment: fixed;
     color: var(--color-ink);
     font-family: var(--font-sans);
-    font-size: 16px;
-    line-height: 1.6;
-    font-feature-settings: "palt" 1;
+    font-size: 17px;
+    line-height: 1.75;
+    font-weight: 400;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -109,8 +113,9 @@
 
 @layer components {
   .font-display {
-    font-variation-settings: "opsz" 144, "SOFT" 30;
-    font-feature-settings: "ss01" 1, "palt" 1;
+    font-weight: 400;
+    letter-spacing: 0.06em;
+    font-feature-settings: "palt" 1;
   }
 
   .tabular {
