@@ -80,6 +80,8 @@ export type Task = {
   status: TaskStatus
   primaryGoalId?: string
   primaryCommitmentId?: string
+  // Explicit many-to-many desire links for the personal MVP.
+  desireIds?: string[]
   createdAt: string
   completedAt?: string
 }

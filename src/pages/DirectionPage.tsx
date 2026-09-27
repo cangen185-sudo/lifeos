@@ -46,7 +46,7 @@ export function DirectionPage() {
           </h1>
           <p className="mt-4 max-w-lg text-[15px] leading-7 text-mute">
             欲望说明你真正要什么；目标是朝它推进、能被检验的结果；承诺是清醒时签下的约束。
-            今日任务会顺着这根线自动对齐。
+            今日任务可以直接关联多个欲望；目标与承诺按需要再补充。
           </p>
         </header>
 
@@ -134,7 +134,7 @@ export function DirectionPage() {
           <Kicker>怎么用</Kicker>
           <ol className="mt-3 space-y-3 text-[14px] leading-6 text-mute">
             <li>
-              <span className="text-ink">欲望</span>少而真。三个以内，按重要程度排。
+              <span className="text-ink">欲望</span>少而真，按重要程度排，不必凑数。
             </li>
             <li>
               <span className="text-ink">目标</span>要能判断有没有做到。
