@@ -105,6 +105,10 @@ export function parseBackup(text: string): BackupPayload {
     choice(row.status, statuses, `${at}.status`)
     optionalString(row.primaryGoalId, `${at}.primaryGoalId`)
     optionalString(row.primaryCommitmentId, `${at}.primaryCommitmentId`)
+    if (row.desireIds !== undefined) {
+      if (!Array.isArray(row.desireIds) || row.desireIds.some((id) => typeof id !== 'string' || !id.trim()) ||
+        new Set(row.desireIds).size !== row.desireIds.length) fail(`${at}.desireIds`)
+    }
     timestamp(row.createdAt, `${at}.createdAt`)
     optionalTimestamp(row.completedAt, `${at}.completedAt`)
   })
@@ -168,6 +172,9 @@ export function parseBackup(text: string): BackupPayload {
   tasks.forEach((row, index) => {
     if (row.primaryGoalId && !goalIds.has(row.primaryGoalId)) fail(`tasks[${index}].primaryGoalId 不存在`)
     if (row.primaryCommitmentId && !commitmentIds.has(row.primaryCommitmentId)) fail(`tasks[${index}].primaryCommitmentId 不存在`)
+    for (const desireId of row.desireIds ?? []) {
+      if (!desireIds.has(desireId)) fail(`tasks[${index}].desireIds 不存在`)
+    }
   })
 
   return { version: data.version, exportedAt: data.exportedAt as string,

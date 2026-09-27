@@ -18,10 +18,10 @@ import { finishTask, startTask } from '../application/taskCommands'
 import { db, ensureDailyPlan, newId } from '../db/db'
 import {
   importanceScore,
-  suggestAlignment,
   whyPathFor,
 } from '../domain/alignment'
 import { todayKey } from '../domain/clock'
+import { desiresForTask } from '../domain/desireLinks'
 import type { Commitment, Desire, Goal, PriorityBand, Task } from '../domain/types'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 
@@ -65,7 +65,9 @@ export function TodayPage() {
   const [manualMinutes, setManualMinutes] = useState(0)
   const [goalId, setGoalId] = useState('')
   const [commitmentId, setCommitmentId] = useState('')
-  const [manualAlign, setManualAlign] = useState(false)
+  const [desireIds, setDesireIds] = useState<string[]>([])
+  const [editingDesires, setEditingDesires] = useState<Task | null>(null)
+  const [editingDesireIds, setEditingDesireIds] = useState<string[]>([])
   const [composerOpen, setComposerOpen] = useState(false)
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null)
   const [taskError, setTaskError] = useState<string | null>(null)
@@ -96,17 +98,6 @@ export function TodayPage() {
     return map
   }, [sessions])
 
-  const suggestion = useMemo(
-    () => suggestAlignment(title, goals, desires, commitments),
-    [title, goals, desires, commitments],
-  )
-
-  useEffect(() => {
-    if (manualAlign) return
-    setGoalId(suggestion.goalId ?? '')
-    setCommitmentId(suggestion.commitmentId ?? '')
-  }, [suggestion, manualAlign])
-
   const alignedPath = useMemo(() => {
     const goal = goals.find((item) => item.id === goalId)
     const desire = desires.find((item) => item.id === goal?.primaryDesireId)
@@ -124,8 +115,13 @@ export function TodayPage() {
     return { goal, desire, commitment }
   }
   function rankTask(task: Task): number {
-    const { desire, commitment } = contextOf(task)
-    return importanceScore(task.priorityBand, desire, commitment)
+    const { commitment } = contextOf(task)
+    const linked = desiresForTask(task, goals, desires)
+    const mostImportant = linked.reduce<Desire | undefined>(
+      (best, current) => !best || current.importance > best.importance ? current : best,
+      undefined,
+    )
+    return importanceScore(task.priorityBand, mostImportant, commitment)
   }
 
   const mustTasks = visibleTasks.filter((task) => task.priorityBand === 'must')
@@ -141,7 +137,7 @@ export function TodayPage() {
   )
   const remaining = Math.min(capacityDraft - plannedMust, minutesToMidnight)
   const runningTask = visibleTasks.find((task) => task.status === 'in_progress')
-  const alignedCount = visibleTasks.filter((task) => task.primaryGoalId).length
+  const alignedCount = visibleTasks.filter((task) => desiresForTask(task, goals, desires).length > 0).length
 
   async function saveCapacity() {
     await db.dailyPlans.put({
@@ -166,13 +162,27 @@ export function TodayPage() {
       status: 'planned',
       primaryGoalId: goalId || undefined,
       primaryCommitmentId: commitmentId || undefined,
+      desireIds,
       createdAt: new Date().toISOString(),
     }
     await db.tasks.add(task)
     setTitle('')
     setPlannedStart('')
-    setManualAlign(false)
+    setDesireIds([])
+    setGoalId('')
+    setCommitmentId('')
     setComposerOpen(false)
+  }
+
+  async function saveDesireLinks() {
+    if (!editingDesires) return
+    try {
+      await db.tasks.update(editingDesires.id, { desireIds: editingDesireIds })
+      setEditingDesires(null)
+      setTaskError(null)
+    } catch (error) {
+      setTaskError(error instanceof Error ? error.message : '关联欲望失败，请重试')
+    }
   }
 
   async function runTaskCommand(taskId: string, action: () => Promise<unknown>) {
@@ -212,16 +222,15 @@ export function TodayPage() {
       plannedStart={plannedStart}
       goalId={goalId}
       goals={goals}
+      desires={desires}
+      desireIds={desireIds}
       alignedPath={alignedPath}
-      onTitle={(value) => {
-        setTitle(value)
-        setManualAlign(false)
-      }}
+      onTitle={setTitle}
+      onDesireIds={setDesireIds}
       onMinutes={setMinutes}
       onBand={setBand}
       onPlannedStart={setPlannedStart}
       onGoal={(value) => {
-        setManualAlign(true)
         setGoalId(value)
         const goal = goals.find((item) => item.id === value)
         const linked = commitments.find(
@@ -329,6 +338,7 @@ export function TodayPage() {
                           index={nodeIndex++}
                           task={task}
                           why={whyPathFor(goal, desire, commitment)}
+                          linkedDesires={desiresForTask(task, goals, desires)}
                           importance={rankTask(task)}
                           sessionStartedAt={
                             openSessions.has(task.id)
@@ -339,6 +349,11 @@ export function TodayPage() {
                           busy={pendingTaskId === task.id}
                           onStart={() => void runTaskCommand(task.id, () => startTask(task.id))}
                           onComplete={() => requestComplete(task)}
+                          onEditDesires={() => {
+                            setTaskError(null)
+                            setEditingDesires(task)
+                            setEditingDesireIds(task.desireIds ?? [])
+                          }}
                         />
                       )
                     })}
@@ -420,12 +435,12 @@ export function TodayPage() {
               dim={visibleTasks.length === 0}
             />
           </dl>
-          {goals.length === 0 ? (
+          {desires.length === 0 ? (
             <Link
               to="/direction"
               className="mt-4 inline-block text-[13px] text-copper underline-offset-4 hover:underline"
             >
-              还没有方向。先写下欲望与目标 →
+              还没有方向。先写下一个欲望 →
             </Link>
           ) : null}
         </div>
@@ -517,6 +532,25 @@ export function TodayPage() {
           </div>
         </form>
       </Dialog>
+      <Dialog
+        open={editingDesires !== null}
+        onClose={() => setEditingDesires(null)}
+        kicker="Direction"
+        title="这件事服务哪些欲望"
+      >
+        <form onSubmit={(event) => { event.preventDefault(); void saveDesireLinks() }}>
+          <p className="mb-4 text-sm text-mute">{editingDesires?.title}</p>
+          {taskError ? <p role="alert" className="mb-3 text-sm text-copper">{taskError}</p> : null}
+          <DesireChoices desires={desires} selected={editingDesireIds} onChange={setEditingDesireIds} />
+          {editingDesires?.primaryGoalId ? (
+            <p className="mt-3 text-xs text-mute">原有目标关联的欲望也会显示在任务上。</p>
+          ) : null}
+          <div className="mt-6 flex gap-2">
+            <Button type="button" variant="ghost" className="flex-1" onClick={() => setEditingDesires(null)}>取消</Button>
+            <Button type="submit" variant="solid" className="flex-1">保存关联</Button>
+          </div>
+        </form>
+      </Dialog>
     </div>
   )
 }
@@ -579,8 +613,11 @@ function Composer({
   plannedStart,
   goalId,
   goals,
+  desires,
+  desireIds,
   alignedPath,
   onTitle,
+  onDesireIds,
   onMinutes,
   onBand,
   onPlannedStart,
@@ -594,8 +631,11 @@ function Composer({
   plannedStart: string
   goalId: string
   goals: Goal[]
+  desires: Desire[]
+  desireIds: string[]
   alignedPath: string[]
   onTitle: (value: string) => void
+  onDesireIds: (value: string[]) => void
   onMinutes: (value: number) => void
   onBand: (value: PriorityBand) => void
   onPlannedStart: (value: string) => void
@@ -630,6 +670,15 @@ function Composer({
           value={title}
           onChange={(event: ChangeEvent<HTMLInputElement>) => onTitle(event.target.value)}
         />
+      </div>
+
+      <div className={cx('border-t border-white/10 py-3', floating && 'px-6')}>
+        <p className="font-mono text-[10px] tracking-[0.18em] text-paper/45">关联欲望（可多选）</p>
+        {desires.some((desire) => desire.active) ? (
+          <DesireChoices desires={desires} selected={desireIds} onChange={onDesireIds} dark />
+        ) : (
+          <Link to="/direction" className="mt-2 inline-block text-xs text-copper">先去方向页写下你的欲望 →</Link>
+        )}
       </div>
 
       <div
@@ -680,7 +729,7 @@ function Composer({
         <div className="min-w-0 flex-1">
           {activeGoals.length === 0 ? (
             <Link to="/direction" className="text-[12px] text-copper hover:text-paper">
-              先去「方向」写下欲望和目标，任务才会自动对齐 →
+              目标可选；上方可以直接关联欲望 →
             </Link>
           ) : (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -721,22 +770,53 @@ function Composer({
   )
 }
 
+function DesireChoices({ desires, selected, onChange, dark = false }: {
+  desires: Desire[]
+  selected: string[]
+  onChange: (value: string[]) => void
+  dark?: boolean
+}) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {desires.filter((desire) => desire.active).map((desire) => (
+        <label key={desire.id} className={cx(
+          'inline-flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs',
+          dark ? 'border-white/20 text-paper' : 'border-line text-ink',
+        )}>
+          <input
+            type="checkbox"
+            checked={selected.includes(desire.id)}
+            onChange={(event) => onChange(event.target.checked
+              ? [...selected, desire.id]
+              : selected.filter((id) => id !== desire.id))}
+          />
+          {desire.title}
+        </label>
+      ))}
+    </div>
+  )
+}
+
 function TaskNode({
   task,
   why,
+  linkedDesires,
   importance,
   sessionStartedAt,
   onStart,
   onComplete,
+  onEditDesires,
   busy,
   index,
 }: {
   task: Task
   why: string[]
+  linkedDesires: Desire[]
   importance: number
   sessionStartedAt?: string
   onStart: () => void
   onComplete: () => void
+  onEditDesires: () => void
   busy: boolean
   index: number
 }) {
@@ -774,7 +854,16 @@ function TaskNode({
             <span className={running ? 'text-copper' : ''}>{labelStatus(task.status)}</span>
             {running && sessionStartedAt ? <Elapsed startedAt={sessionStartedAt} /> : null}
           </p>
-          <Chain path={why} className="mt-1.5" />
+          {why.length > 0 ? <Chain path={why} className="mt-1.5" /> : null}
+          <p className="mt-1 text-[12px] leading-5 text-mute">
+            {linkedDesires.length > 0
+              ? `关联欲望：${linkedDesires.map((desire) => desire.title).join(' · ')}`
+              : '尚未关联欲望'}
+            {' · '}
+            <button type="button" className="text-copper underline-offset-2 hover:underline" onClick={onEditDesires}>
+              修改关联
+            </button>
+          </p>
         </div>
         {!done ? (
           <div className="flex shrink-0 gap-1.5 sm:pt-0.5">

@@ -37,6 +37,8 @@ describe('backup safety', () => {
     ['missing direction table', (data: BackupPayload) => { delete data.goals }, 'goals'],
     ['duplicate key', (data: BackupPayload) => { data.tasks.push(task('restored')) }, 'tasks[1].id'],
     ['orphan session', (data: BackupPayload) => { data.workSessions[0].taskId = 'absent' }, 'workSessions[0].taskId'],
+    ['unknown linked desire', (data: BackupPayload) => { data.tasks[0].desireIds = ['absent'] }, 'tasks[0].desireIds'],
+    ['duplicate linked desire', (data: BackupPayload) => { data.tasks[0].desireIds = ['desire', 'desire'] }, 'tasks[0].desireIds'],
   ])('rejects %s before replacing existing data', async (_name, mutate, path) => {
     await db.tasks.add(task('original'))
     const data = payload()
@@ -55,12 +57,14 @@ describe('backup safety', () => {
   })
 
   it('round trips all seven tables and exposes a validated preview', async () => {
-    const text = JSON.stringify(payload())
+    const data = payload()
+    data.tasks[0].desireIds = ['desire']
+    const text = JSON.stringify(data)
     expect(parseBackup(text).tasks).toHaveLength(1)
     expect(await db.tasks.count()).toBe(0)
     await importBackup(text)
     const exported = await exportBackup()
-    expect(exported).toEqual({ ...payload(), exportedAt: exported.exportedAt })
+    expect(exported).toEqual({ ...data, exportedAt: exported.exportedAt })
     expect(parseBackup(JSON.stringify(exported))).toEqual(exported)
   })
 
