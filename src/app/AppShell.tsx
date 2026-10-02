@@ -5,6 +5,7 @@ import {
   ScrollText,
   SunMedium,
   Upload,
+  Plug,
 } from 'lucide-react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useCallback, useState, useSyncExternalStore } from 'react'
@@ -23,7 +24,8 @@ const nav = [
   { to: '/', label: '今日', hint: 'Today', icon: SunMedium, end: true },
   { to: '/direction', label: '方向', hint: 'Direction', icon: Compass },
   { to: '/review', label: '复盘', hint: 'Review', icon: ScrollText },
-  { to: '/analytics', label: '分析', hint: 'Analytics', icon: BarChart3 },
+  { to: '/analytics', label: '成长', hint: 'Growth', icon: BarChart3 },
+  { to: '/connections', label: '连接', hint: 'Connect', icon: Plug },
 ]
 
 type Notice = { title: string; body: string } | null
@@ -109,7 +111,7 @@ export function AppShell() {
                 style={{ ['--i' as string]: index }}
                 className={cx(
                   'group rise relative flex min-h-11 items-center gap-3 rounded-md pl-4 pr-2 text-[15px] transition-colors duration-200',
-                  active ? 'text-ink' : 'text-mute hover:text-ink',
+                  active ? 'bg-copper/10 text-ink' : 'text-mute hover:text-ink',
                 )}
               >
                 <span
@@ -147,7 +149,7 @@ export function AppShell() {
         <p role={localSave.state === 'error' || localSave.state === 'conflict' ? 'alert' : undefined}
           className="px-5 pb-2 text-[11px] leading-5 text-mute md:hidden">{saveLabel}</p>
 
-        <main className="mx-auto w-full max-w-[72rem] flex-1 px-5 pb-32 pt-4 md:px-10 md:pb-16 md:pt-12 xl:px-14">
+        <main className="mx-auto w-full max-w-[90rem] flex-1 px-5 pb-32 pt-4 md:px-8 md:pb-16 md:pt-9 xl:px-10">
           <Outlet />
         </main>
       </div>
@@ -156,7 +158,7 @@ export function AppShell() {
         className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-bone/92 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden"
         aria-label="底部导航"
       >
-        <ul className="grid grid-cols-4">
+        <ul className="grid grid-cols-5">
           {nav.map((item) => {
             const active = isCurrent(item.to, item.end)
             return (

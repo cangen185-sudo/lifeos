@@ -1,6 +1,6 @@
-import { datesBetween, lastNDates, parseDateKey, shiftDate, todayKey } from './clock'
-import { desiresForTask } from './desireLinks'
-import { classifyReason } from './review'
+import { datesBetween, lastNDates, parseDateKey, shiftDate, todayKey } from './clock.ts'
+import { desiresForTask } from './desireLinks.ts'
+import { classifyReason } from './review.ts'
 import type {
   DailyPlan,
   DailyReview,

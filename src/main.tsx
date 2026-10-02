@@ -5,6 +5,7 @@ import './fonts.css'
 import App from './App.tsx'
 import { startLocalFileSync } from './db/localFileSync'
 import './index.css'
+import './growth.css'
 
 async function start() {
   await startLocalFileSync()

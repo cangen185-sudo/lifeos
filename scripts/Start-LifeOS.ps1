@@ -1,5 +1,12 @@
 $ErrorActionPreference = 'Stop'
 
+$launchMutex = New-Object System.Threading.Mutex($false, 'Local\LifeOS-Launcher')
+$launchLocked = $false
+try {
+  try { $launchLocked = $launchMutex.WaitOne(15000) }
+  catch [System.Threading.AbandonedMutexException] { $launchLocked = $true }
+  if (-not $launchLocked) { throw 'Another LifeOS launch is still running. Try again after it finishes.' }
+
 $projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $localRoot = Join-Path $env:LOCALAPPDATA 'LifeOS'
 $profileDir = Join-Path $localRoot 'BrowserProfile'
@@ -15,6 +22,9 @@ New-Item -ItemType Directory -Path $profileDir, $logsDir -Force | Out-Null
 
 $node = (Get-Command node.exe -ErrorAction Stop).Source
 $npm = (Get-Command npm.cmd -ErrorAction Stop).Source
+$nodeVersion = (& $node --version).Trim().TrimStart('v')
+$nodeMajor = [int]($nodeVersion.Split('.')[0])
+if ($nodeMajor -lt 24) { throw 'LifeOS growth service requires Node.js 24 or newer.' }
 
 if (Test-Path -LiteralPath $browserChoice) {
   $browser = (Get-Content -LiteralPath $browserChoice -Raw -Encoding UTF8).Trim()
@@ -94,3 +104,7 @@ Start-Process -FilePath $browser -ArgumentList @($profileArgument, $appArgument,
 Write-Host "LifeOS opened: $serverUrl"
 Write-Host "Data file: $($status.dataFile)"
 Write-Host "Browser profile: $profileDir"
+} finally {
+  if ($launchLocked) { $launchMutex.ReleaseMutex() }
+  $launchMutex.Dispose()
+}

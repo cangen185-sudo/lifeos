@@ -4,6 +4,7 @@ import { createServer } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createGrowthService } from './growth-service.mjs'
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const projectDir = path.resolve(scriptDir, '..')
@@ -108,6 +109,7 @@ export function createLifeOSServer({
   const dataFile = path.join(storageRoot, 'lifeos-backup.json')
   const previousFile = path.join(storageRoot, 'lifeos-backup.previous.json')
   let writeQueue = Promise.resolve()
+  const growth = createGrowthService(storageRoot, () => currentBackup(dataFile))
 
   const server = createServer(async (request, response) => {
     try {
@@ -116,6 +118,24 @@ export function createLifeOSServer({
         return replyJson(response, 403, { error: '只允许本机固定地址访问' })
       }
       const url = new URL(request.url || '/', `http://${host}`)
+
+      if (url.pathname === '/api/growth' || url.pathname.startsWith('/api/growth/')) {
+        if (request.headers['sec-fetch-site'] === 'cross-site' ||
+          (request.headers.origin && request.headers.origin !== `http://${host}`) ||
+          (request.method === 'POST' && (request.headers.origin !== `http://${host}` ||
+          !request.headers['content-type']?.startsWith('application/json')))) {
+          return replyJson(response, 403, { error: '只允许本机应用访问成长接口' })
+        }
+        let body = {}
+        if (request.method === 'POST') {
+          try { body = JSON.parse((await readBody(request)).toString('utf8')) } catch (e) {
+            return replyJson(response, e.status || 400, { error: '请求必须是有效 JSON' })
+          }
+          if (!body || typeof body !== 'object' || Array.isArray(body)) return replyJson(response, 400, { error: '请求格式无效' })
+        }
+        await writeQueue.catch(() => {})
+        return replyJson(response, 200, await growth.handle(request.method, url.pathname, body))
+      }
 
       if (url.pathname === '/api/status' && request.method === 'GET') {
         const backup = await currentBackup(dataFile)
@@ -208,7 +228,14 @@ export function createLifeOSServer({
       else response.destroy(error)
     }
   })
-  return { server, dataFile, previousFile }
+  let timer
+  server.on('listening', () => {
+    void growth.tick()
+    timer = setInterval(() => { void growth.tick() }, 60_000)
+    timer.unref()
+  })
+  server.on('close', () => clearInterval(timer))
+  return { server, dataFile, previousFile, growth }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

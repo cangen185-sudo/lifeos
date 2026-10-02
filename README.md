@@ -13,9 +13,11 @@
 - **分析**：近七日已确认 MUST 的分子/分母、计划与实际分钟、最终未完成原因，以及多欲望关联行动。实际时间按唯一闭合计时记录计算。
 - Windows 固定入口：专用浏览器配置中的 IndexedDB + 自动本地 JSON 文件；仍可手动导出 / 导入
 
-明确不做：云同步、系统 Push、LLM、账号、Project、任务依赖、图页面。
+成长平台新增程序复盘、建议反馈、可选本机调度和 Agent 交接。当前不含云同步、系统 Push、自动模型调用或账户连接。架构与后续阶段见 [GROWTH-ARCHITECTURE.md](docs/GROWTH-ARCHITECTURE.md)，本机接口见 [GROWTH-API.md](docs/GROWTH-API.md)。
 
 ## 日常打开与保存位置（Windows）
+
+桌面快捷入口：在项目目录运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\Install-DesktopShortcut.ps1`。以后双击桌面的 **LifeOS** 即可静默打开；数据与原入口共用，后台服务在关闭页面后继续运行，重启电脑后双击快捷方式重新启动。启动失败会提示日志位置；本入口不设置开机自启。
 
 首次使用先在项目目录运行一次 `npm ci`，之后双击项目根目录的 `Open-LifeOS.cmd`。它会构建当前代码、启动只监听 `127.0.0.1` 的本地服务，并用固定的浏览器配置打开 LifeOS。需要 Node.js 及 Chrome 或 Edge。保持项目文件夹在本机；再次双击同一个入口即可打开已有记录。
 
@@ -27,7 +29,7 @@
 
 ## 开发运行
 
-需要满足 `package.json` 中 Vite 8 的 Node.js 版本要求；本地验收使用 Node.js 24。
+需要 Node.js 24+；本机成长服务复用 TypeScript 纯函数，通过 Node 原生类型擦除运行。
 
 ```bash
 npm ci

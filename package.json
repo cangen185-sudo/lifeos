@@ -3,12 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": { "node": ">=24" },
   "description": "Personal execution system: keep sober decisions binding when you are weak.",
   "scripts": {
     "dev": "vite --host",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "vitest run && node --test scripts/lifeos-local-server.test.mjs",
+    "test": "vitest run && node --test scripts/lifeos-local-server.test.mjs scripts/growth-service.test.mjs",
     "preview": "vite preview --host"
   },
   "dependencies": {

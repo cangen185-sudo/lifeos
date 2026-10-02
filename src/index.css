@@ -19,7 +19,7 @@ html {
   --color-moss-soft: #dce5df;
   --color-night: #1b1a18;
 
-  --font-sans: "Ma Shan Zheng", "Kaiti SC", "STKaiti", "KaiTi", cursive;
+  --font-sans: "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
   --font-display: "Zhi Mang Xing", "Ma Shan Zheng", "Kaiti SC", "STKaiti", cursive;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
 
@@ -53,14 +53,11 @@ html {
 
   body {
     margin: 0;
-    background-color: var(--color-bone);
-    background-image:
-      radial-gradient(900px 360px at 12% -10%, rgba(176, 114, 42, 0.07), transparent 60%),
-      radial-gradient(700px 300px at 100% 0%, rgba(76, 107, 94, 0.05), transparent 60%);
+    background-color: var(--color-paper);
     background-attachment: fixed;
     color: var(--color-ink);
     font-family: var(--font-sans);
-    font-size: 17px;
+    font-size: 15px;
     line-height: 1.75;
     font-weight: 400;
     -webkit-font-smoothing: antialiased;
@@ -209,6 +206,7 @@ html {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }

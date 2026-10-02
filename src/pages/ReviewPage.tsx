@@ -81,6 +81,7 @@ export function ReviewPage() {
     <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_17rem] lg:gap-16 xl:grid-cols-[minmax(0,1fr)_19rem]">
       <section className="min-w-0">
         <header className="rise">
+          <Link to="/analytics" className="mb-4 inline-flex text-sm text-copper underline underline-offset-4">查看程序复盘与成长建议 →</Link>
           <Kicker>Review</Kicker>
           <h1 className="mt-3 font-display text-[3rem] leading-[1.05] sm:text-[3.5rem]">
             复盘
